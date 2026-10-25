@@ -1,449 +1,268 @@
-# ColdChain Copilot (`coldchain-copilot`)
+# ColdChain Copilot
 
-MongoDB Solo Project Assignment
+An operations agent for cold-chain logistics. It reads reefer sensor data, checks it against shipper contracts and SOPs, and tells operators **what happened and what to do next**.
 
-An operational agent that reads cold-chain IoT data and uses contracts and manuals to explain what needs to be done now.
-
-MongoDB Time Series × Vector Search (RAG) × LLM Tool Calling MVP demo
+*MongoDB Solo Project · Time Series × Vector Search × Ontology × LLM tool calling*
 
 ```text
 > Brief me on today's data.
-  ↳ find_excursions({"hours": 24})
-  ↳ find_energy_anomalies({"hours": 24})
-  ↳ get_reefer_timeline({"reefer_id": "RF-02", ...})
-  ↳ search_knowledge({"query": "live fish notification obligation above 4 degrees", "shipment_id": "SHP-102", "doc_type": "contract"})
-  ↳ search_knowledge({"query": "refrigeration shutdown response procedure", "doc_type": "sop"})
+  ↳ find_excursions({"fleet_id": "FLEET-01", "hours": 24})
+  ↳ find_energy_anomalies({"fleet_id": "FLEET-01", "hours": 24})
+  ↳ evaluate_obligations({"shipment_id": "SHP-102"})
   ↳ ...
 
-Over the last 24 hours, there were two temperature excursions and one sign of equipment abnormality. Three cases have contractual notification deadlines.
-
 Action Required
-· [RF-02 / SHP-102] Notify BlueHarbor Fisheries' quality assurance team by 10:12 (excursion start at 09:12 + 1 hour).
-  Evidence: 24 consecutive minutes outside the permitted range ≥ 15 minutes [BlueHarbor Fisheries Live Fish Transport Contract § Article 6]
-· [RF-02 / SHP-102] Do not unload at the destination before a quality inspection with the shipper present [same contract § Article 7].
-· [RF-03 / SHP-103] Notify OceanPeak Tuna Trading's logistics team within 30 minutes and arrange a third-party flesh-color inspection [OceanPeak Tuna Trading contract § Articles 5 and 6].
-· [RF-04 / SHP-104] Notify the shipper of signs of equipment abnormality and submit a backup equipment plan within 24 hours [CoastalFresh Seafood contract § Article 5].
+· [RF-02 / SHP-102] Notify BlueHarbor QA by 10:12 — 24 consecutive min above 4°C (≥ 15)
+  [BlueHarbor Live Fish Contract v1 § Art. 6]
+· [RF-02 / SHP-102] Quality inspection before unloading — follows from Art. 6
+  [BlueHarbor Live Fish Contract v1 § Art. 7]
 
-Incident Details
-· RF-02, live fish (0–4°C): 09:12–09:35, 24 minutes, peak 8.2°C. Refrigeration power was 0 kW during the same period → suspected refrigeration shutdown.
-· RF-03, frozen tuna (-60 to -50°C): 11:20–11:37, 18 minutes, peak -42°C. Coincides with 15 minutes of door opening (exceeds the 10-minute unloading limit).
-· RF-04, frozen shrimp: temperature normal; power consumption +30% above baseline.
+Needs Confirmation
+· [RF-05 / SHP-105] Humidity clause cannot be checked — humidity is not collected
+  [TidalPearl Oyster Contract v1 § Art. 5]
 
 Suggestion
-· RF-02: Inspect the compressor and electrical system after the trip, before reassignment [Maintenance Manual § 4].
-· RF-04: Check for refrigerant leaks, condenser contamination, and door gasket issues; schedule maintenance within 48 hours [Maintenance Manual § 2].
-· RF-03: Record the unloading SOP violation and retrain the work crew [Excursion Response SOP § 3].
+· [RF-02] Inspect compressor and power system before reassignment  [Maintenance Manual § 4]
 ```
 
-## 1. What Is This Project?
+---
 
-In refrigerated and frozen transport (cold chain), each reefer container produces temperature, refrigeration power, and door-status readings every minute. A simple rule can detect whether a temperature threshold was exceeded, but the real operational work comes afterward:
+## 1. What It Does
 
-* Why did the excursion happen: refrigeration shutdown or an open door?
-* What does this shipper's contract require, and by when: notification, quality inspection, or compensation conditions?
-* What do internal SOPs and maintenance manuals recommend?
-* Which equipment is likely to develop a problem, even if no incident has occurred yet?
+Each reefer (refrigerated container) reports temperature, compressor power, and door status every minute. Detecting a threshold breach is easy. The real work comes after:
 
-The information needed for these decisions is split across two sources: numbers in sensor data and rules in contracts and manuals. ColdChain Copilot brings them together so an operator can say “Brief me on today's data” and receive both what happened (facts) and what to do next (Action Required / Suggestion), with supporting evidence.
+- **Why** did it happen — compressor stop or an open door?
+- What does **this shipper's contract** require, and by when?
+- What do **SOPs and maintenance manuals** recommend?
+- Which equipment is **about to fail**, even if nothing has happened yet?
 
-### How It Works: Detection → Evidence Retrieval → Decision
+The facts live in sensor data; the rules live in documents. ColdChain Copilot connects the two, and handles questions at five levels on the same data:
+
+| Level | Example question | How it is answered |
+|---|---|---|
+| 1 · Lookup | *Where is SHP-102 going?* | Shipment document |
+| 2 · Sensor analysis | *Which readings exceeded their range today?* | Time Series aggregation |
+| 3 · Document search | *How long may the door stay open while unloading tuna?* | Vector Search (RAG) |
+| 4 · Facts + evidence | *Brief me on today's data.* | Levels 2 + 3 + 5 combined |
+| 5 · Rule decisions | *What must we do for RF-02? Could they refuse delivery?* | Ontology: clauses as rules |
 
 ```text
- User question ("Brief me on today's data")
-     │
-     ▼
- ┌─────────┐  Decides which tools to call and with which parameters
- │   LLM   │ ──────────────────────────────────────────────────────┐
- └─────────┘                                                      │
-     ▲                                                            ▼
-     │                         ┌────────────────────────────────────────────┐
-     │                         │                 MongoDB                    │
-     │  ① Detection (facts)    │  readings (Time Series + policy)       │
-     │  Aggregation summaries ◀│  → Excursions, power anomalies, timelines │
-     │                         │                                            │
-     │  ② Evidence (RAG)       │  knowledge (document chunks + embeddings)  │
-     │  Relevant clauses ◀─────│  → $vectorSearch + contract/version filters  │
-     │                         └────────────────────────────────────────────┘
-     │
- ③ Decision: Compare the facts (24 minutes) with clause conditions
-    (at least 15 consecutive minutes).
-     → Action Required (obligation, deadline, evidence) / Suggestion
+ Question ──▶ LLM agent (chooses tools, repeats as needed)
+                 │
+   ① Detect     readings    aggregation      → "RF-02: 24 consecutive min above 4°C"
+   ② Scope      shipments   find             → SHP-102 → BlueHarbor contract v1
+   ③ Decide     clauses     rule evaluation  → Art. 6 triggered (24 ≥ 15)
+                            $graphLookup     → Art. 7 depends on Art. 6 → triggered
+   ④ Quote      knowledge   $vectorSearch    → source text of each clause
+                 │
+   ⑤ Explain    LLM writes Action Required / Needs Confirmation / Suggestion
 ```
 
-* Detection is performed by aggregation. Instead of tens of thousands of sensor readings, the LLM receives summaries such as “two excursions, with start time, end time, and peak temperature.” This avoids errors from asking the LLM to count or compare raw values and produces consistent numbers for the same query over the same data.
-* Evidence is retrieved through vector search, with exact metadata/ID retrieval where required for clause coverage. Contract retrieval is scoped by shipment, cargo type, and the applicable contract ID/version resolved from `shipments` to prevent cross-shipper or cross-version evidence.
-* Decisions are made by the LLM. It compares sensor facts with clause conditions and cites only retrieved clauses. It does not invent obligations that were not retrieved.
-* The LLM repeats this process as needed through an agentic loop.
+### Design Principles
 
-### MVP Design Decision and Assertions
+1. **The database calculates; the LLM explains.** Sensor facts come from aggregation. The LLM never counts raw readings.
+2. **Rules are data.** Whether a clause applies is decided by comparing named measures with structured conditions, not by the LLM reading a sentence.
+3. **Evidence comes from the right contract.** Clauses are used only from the contract version assigned to the shipment.
+4. **No evidence, no conclusion.** If the data or clause needed for a decision is missing, the answer is "needs confirmation" — never "no obligation."
 
-Decision ID: MVP-001 — Query-Time Detection with Embedded Policy Snapshots
+---
 
-Status: Accepted for the MVP; implementation and validation are pending.
+## 2. Why MongoDB
 
-For this MVP, we choose a hybrid document model: embed the resolved numerical temperature policy in Time Series readings, keep versioned contracts and manuals separate, and calculate incidents at query time. This is a workload-specific decision, not a claim that embedding is universally better than normalization.
+The agent needs four kinds of data at once: sensor time series, shipment context, documents with embeddings, and rules. MongoDB holds them in one document model, one query language, and one cluster.
 
-#### Model and Responsibilities
+```js
+// shipments — who, what, which policy, which contract
+{ shipmentId: "SHP-102", fleetId: "FLEET-01", reeferId: "RF-02", cargoType: "live_fish",
+  temperaturePolicy: { minC: 0, maxC: 4, policyVersion: "SHP-102-policy-v1" },
+  contractRef: { contractId: "blueharbor-live-fish", version: "v1" } }
 
-| Collection | Responsibility | Usage |
+// readings (Time Series) — measurements + stable context in meta
+{ ts: ISODate("2026-10-15T00:12:00Z"),
+  meta: { fleetId: "FLEET-01", reeferId: "RF-02", shipmentId: "SHP-102", cargoType: "live_fish",
+          temperaturePolicy: { minC: 0, maxC: 4, policyVersion: "SHP-102-policy-v1" } },
+  temp: 3.42, powerKw: 2.13, doorOpen: false }
+
+// clauses — a contract article as a rule, linked to its source text
+{ clauseId: "blueharbor-live-fish-v1-art6", contractId: "blueharbor-live-fish", version: "v1",
+  trigger: { eventType: "event:temperature_excursion",
+             allOf: [ { measure: "consecutiveMinutes", op: "gte", value: 15 } ] },
+  action: { type: "notify", party: "shipper.qa" },
+  deadline: { anchor: "eventStart", offsetMinutes: 60 },
+  chunkId: "blueharbor-live-fish-v1-article-6" }
+```
+
+### 2.1 Document Model: The Data Is Shaped Like Documents
+
+The question is not "can a relational schema store this?" — it can. The question is which model matches the shape of this data and the way the agent reads it.
+
+**Each business object is read whole.** An operator asks about *a shipment* or *an excursion*, not about rows. A shipment, with its route, resolved policy, and contract reference, is one document; the agent gets everything it needs in one read and passes it to the LLM as-is. In a normalized schema the same answer is a join across shipments, routes, policies, and contracts, reassembled in application code before the LLM can see it.
+
+**Point-in-time context belongs with the fact.** A reading is only meaningful together with the threshold that applied *when it was recorded*. Embedding the policy snapshot in each reading makes that relationship permanent and join-free. The relational equivalent is an effective-dated policy table and a temporal join on every detection query — more work, and easier to get wrong when a default changes.
+
+**Rules are not uniform.** Every contract has different articles, and each article has a different number of conditions, its own action, and an optional deadline or dependency. As documents, each clause stores exactly its own structure — a `trigger.allOf` array of any length, nested `action` and `deadline`. In tables this becomes either many nullable columns or a generic attribute–value table that is hard to query and validate.
+
+**The schema evolves with the domain.** Adding a humidity sensor, a new event type, or a contract field is a new field, not a migration across every table that references it. That matters in IoT, where payloads differ by vendor and change over time.
+
+### 2.2 Time Series: Efficient Storage, Ordinary Queries
+
+Readings with the same `meta` are grouped into compressed buckets, so the policy snapshot is stored once per bucket, not once per reading, and indexes point to buckets rather than individual readings. Queries still use the standard aggregation framework: `$setWindowFields` turns consecutive out-of-range readings into events, and `$dateTrunc` builds trends. There is no separate time-series query language and no separate store to synchronize.
+
+### 2.3 Vector Search: Retrieval Beside the Data
+
+Document chunks and embeddings live in the same database as shipments. `$vectorSearch` combines semantic similarity with filters on `contractId` and `version` in one stage, so a similar clause from another shipper's contract is never used as evidence — and the filter values come from the shipment document, not from metadata copied into a separate vector store.
+
+### 2.4 Graphs: What MongoDB Handles Here, and Where a Graph Database Fits
+
+MongoDB is not a graph database and this project does not claim to replace one. The point is narrower: **the graph in this demo is small, shallow, and attached to operational documents**, which is the case where modeling it in MongoDB is the better choice.
+
+**Where MongoDB is the right place for the graph (this demo)**
+
+| Relationship | Shape | How it is handled |
 |---|---|---|
-| `cargo_specs` | Versioned default temperature specifications by cargo type | Resolve defaults during shipment setup; not joined during detection |
-| `shipments` | Authoritative fleet/reefer assignment, route, resolved policy, and applicable contract ID/version | Supply stable ingestion context and scope contract retrieval |
-| `readings` | Raw sensor measurements with stable fleet/reefer/shipment IDs and a compact policy snapshot in `meta.temperaturePolicy` | Calculate excursions, equipment indicators, and timelines through ordinary aggregation |
-| `knowledge` | Versioned contract, SOP, and manual chunks with text, metadata, and embeddings | Retrieve evidence through Vector Search and, where required, exact metadata/ID queries |
+| Shipment → contract version | 1 hop | A field: `shipments.contractRef` |
+| Cargo class → parent classes | Fixed, rarely changes | Precomputed `ancestors` array, matched with `$in` |
+| Clause → clause it depends on | 1–2 hops | `$graphLookup` on `clauses.references` |
 
-Excursions are query results in this MVP, not a persisted incident collection. Search is not used to determine whether a sensor incident exists. The agent combines computed facts with applicable evidence when contract or procedure assessment is needed.
+These relationships share three properties:
+- **Every traversal starts from an operational fact** — this shipment, this excursion — and the result is combined with sensor facts in the same pipeline.
+- **Depth is small and bounded.** Nothing here needs more than two hops.
+- **Edges are attributes of documents that already exist.** No separate edge store, no synchronization, no second consistency problem.
 
-#### Assumptions Under Which We Choose This Model
+**Where MongoDB's graph support stops**
 
-* The initial workload is five reefers in one fleet with one-minute measurements over a 72-hour history. Interactive briefings and investigation take priority over continuous alerting.
-* The MVP deployment is unsharded. Sharding and dedicated Search Node demonstrations are not required; the model anticipates future scale-out without claiming validated sharded performance.
-* Each shipment has one validated temperature policy that remains fixed throughout that shipment. Its bounds and contract applicability are resolved before readings are generated or ingested.
-* The primary detection workload spans multiple shipments with potentially different thresholds, making local comparisons against each reading's snapshot convenient.
-* Demo contracts and manuals are fictional, versioned, and loaded before assessment. Documents must be available to the retrieval path before the agent is allowed to rely on them.
-* The MVP supports evidence-backed action recommendations, not autonomous external notifications or other consequential execution.
+`$graphLookup` follows one connection field recursively from a set of starting documents, within a per-stage memory limit. It does not provide:
+- Shortest-path or weighted-path queries
+- Variable-length pattern matching across several edge types in one query (for example Reefer → Compressor model → Part batch → Supplier → other Reefers)
+- Graph algorithms such as centrality, community detection, or propagation scoring
+- Ontology reasoning: inferring new facts from class and property definitions (RDF/OWL-style)
 
-#### Design Assertions and Validation Criteria
+As depth, fan-out, and the number of edge types grow, each hop becomes another index lookup inside an aggregation stage. A graph database stores adjacency natively and is built for exactly these queries.
 
-These are required properties to test, not claims of completed verification.
+**When to add a graph database, and how to split the work**
 
-| Assertion | Required Validation |
-|---|---|
-| A1 — Detection does not depend on contract retrieval or a cargo-specification join. | Inspect detection pipelines for absence of `$lookup` against `cargo_specs`; verify sensor facts remain available when knowledge retrieval fails. |
-| A2 — Historical readings retain their originally assigned thresholds. | Change a cargo default for a future shipment and verify prior snapshots and prior detection results remain unchanged for the same data and query window. |
-| A3 — Every reading uses the shipment's resolved policy. | Validate numeric bounds, `minC <= maxC`, and policy identity before insertion; reject missing or inconsistent snapshots rather than substituting the latest default. |
-| A4 — Incident calculations are deterministic and scoped correctly. | Test boundary equality, known consecutive intervals, shipment separation, query-window edges, and missing/duplicate measurements. Define duration and continuity rules in the design specs before claiming correctness. |
-| A5 — Contract assessment uses the applicable evidence version. | Resolve the contract ID/version from `shipments`, enforce retrieval filters, and test that another shipper's or another version's clauses cannot support a decision. Missing evidence must produce an unresolved assessment, not “no obligation.” |
-| A6 — Contract retrieval is not restricted to temperature excursions. | Test equipment anomalies with normal temperatures, relevant door-opening events, and direct contract questions. Use exact clause retrieval where semantic top-k results cannot establish required coverage. |
-| A7 — Detection is bounded by explicit operational scope and time. | Test fleet, reefer, and shipment filters; validate fleet consistency between shipments and readings; reject unbounded sensor queries. Define maximum windows in the interface specs. Fleet scope is not a substitute for authorization. |
-| A8 — Contract chunks are reusable across shipments. | Assign an existing contract version to a new shipment without modifying document chunks; verify retrieval resolves that shipment's `contractRef` correctly. |
+If the product grows into questions like *"Which in-transit shipments share a compressor part batch with RF-02, and through which depots and suppliers?"* or *"Which depot is the most common point of failure across incidents this quarter?"*, those are path and network-analysis questions. A sensible split:
 
-#### Rationale and Accepted Tradeoffs
+| Responsibility | Where | Why |
+|---|---|---|
+| Sensor history, shipments, documents, embeddings, per-shipment rule evaluation | MongoDB (system of record) | Read and written as documents; high write volume; queried by time and scope |
+| Equipment/supplier/depot network, multi-hop impact paths, graph analytics | Graph database | Relationship-centric, variable depth, needs path algorithms |
+| Connecting the two | IDs as the shared key; the graph holds a projection of relationships, MongoDB holds the full records | The graph answers "which entities"; MongoDB answers "what do we know about them" |
 
-We prioritize a simple, explainable read path and preservation of shipment-time thresholds. Query-time aggregation avoids introducing a background detector, processing checkpoints, and persisted incident reconciliation into the initial MVP. Separate document storage keeps contractual obligations and procedural guidance out of sensor metadata.
+For the MVP, every question stays in MongoDB's range, so no graph database is needed. The design keeps stable IDs on every entity so a graph projection can be added later without remodeling.
 
-We accept the ingestion-side responsibility for policy consistency, the difficulty of correcting invalid historical snapshots, and repeated computation during briefings. Only stable numeric bounds and policy provenance belong in `meta`; full clauses and volatile assessment details do not.
+### 2.5 One Platform
 
-Search index freshness is a separate concern from ordinary sensor queries. Contract versions must be pinned, and unavailable or incomplete evidence must block a definitive contractual assessment. Dedicated Search Nodes are an optional workload-isolation choice, not a correctness dependency or a guarantee of immediate search visibility.
-
-Removing a detection-time join is expected to simplify execution, but no latency, throughput, or storage improvement is asserted without measurement. Validate the chosen model on the seeded workload and inspect aggregation execution plans; use a comparable lookup-based baseline if making comparative performance claims.
-
-#### Conditions for Revisiting the Decision
-
-Revisit this model if measured query latency becomes unacceptable, repeated detection becomes a material load, or continuous alerting is required. At that point, consider materializing incidents while retaining raw readings. Frequent mid-shipment policy changes or mandatory retrospective corrections would also require revisiting policy versioning and snapshot handling.
-
-## 2. Why MongoDB?
-
-To answer correctly, the agent must connect sensor time series, operational data such as cargo specifications, and contracts/manuals with their embeddings. MongoDB's primary advantage is handling all three with one document model, one query language, and one cluster.
-
-### 2.1 Document Model: Data and Context Together
-
-```js
-// cargo_specs (regular collection: versioned default specifications)
-{ cargoType: "live_fish", specVersion: "live-fish-v1",
-  temperaturePolicy: { minC: 0, maxC: 4 } }
-
-// shipments (regular collection: authoritative shipment context)
-{
-  shipmentId: "SHP-102",
-  fleetId: "FLEET-01",
-  reeferId: "RF-02",
-  cargoType: "live_fish",
-  route: {
-    origin: "Harbor City",
-    destination: "Central Seafood Market"
-  },
-  temperaturePolicy: {
-    minC: 0, maxC: 4,
-    sourceSpecVersion: "live-fish-v1",
-    policyVersion: "SHP-102-policy-v1"
-  },
-  contractRef: { contractId: "blueharbor-live-fish", version: "v1" }
-}
-
-// readings (Time Series: shipment-specific policy snapshot)
-{
-  ts: ISODate("2026-10-15T00:12:00Z"),
-  meta: {
-    fleetId: "FLEET-01",
-    reeferId: "RF-02",
-    shipmentId: "SHP-102",
-    cargoType: "live_fish",
-    temperaturePolicy: {
-      minC: 0,
-      maxC: 4,
-      policyVersion: "SHP-102-policy-v1"
-    }
-  },
-  temp: 3.42,
-  powerKw: 2.13,
-  doorOpen: false
-}
-
-// knowledge (contract chunk)
-{
-  chunkId: "blueharbor-live-fish-v1-article-6",
-  title: "BlueHarbor Fisheries Live Fish Transport Contract",
-  section: "Article 6: Notification Upon Temperature Excursion",
-  docType: "contract",
-  contractId: "blueharbor-live-fish",
-  version: "v1",
-  cargoTypes: ["live_fish"],
-  text: "If the internal temperature exceeds 4°C for at least 15 consecutive minutes ...",
-  embedding: [0.012, -0.034, ...]
-}
-```
-
-* Sensor measurements, equipment/cargo/shipment context, and the applicable temperature-policy snapshot live in the same document. Detection reads `readings` directly without a `$lookup` against `cargo_specs`.
-* Document chunks store text, embeddings, document identity, version, and cargo applicability together. Resolve `shipments.contractRef` before retrieving contract evidence. Chunks do not contain growing shipment-ID arrays: multiple shipments reuse the same contract version without modifying its chunks.
-* New sensor types (humidity, GPS, vibration) or document metadata can be accommodated by adding fields without a schema migration.
-* JSON documents are also easy for the LLM to read, simplifying schema descriptions for Text-to-MQL.
-
-### 2.1.1 Cargo Specifications: Manage Defaults, Embed the Applicable Policy
-
-* `cargo_specs` remains the master collection for versioned default temperature ranges by cargo type. It is used when preparing a shipment, not during detection queries.
-* At shipment setup, resolve and validate the applicable temperature policy from the cargo default and any shipment-specific requirements. Store the resolved policy and contract ID/version in `shipments`. The numeric range must agree with the applicable contract; vector retrieval does not automatically configure sensor thresholds.
-* Copy the resolved policy into `readings.meta.temperaturePolicy` when generating or ingesting readings. Store the actual bounds (`minC`, `maxC`) alongside the resolved policy identity (`policyVersion`), rather than only a reference that requires another lookup. Keep default-spec provenance (`sourceSpecVersion`) in `shipments`.
-* Keep this policy stable throughout a shipment in the MVP. Updating `cargo_specs` affects future shipment setup, not historical reading snapshots. Mid-shipment policy changes and retrospective reclassification are outside the current scope.
-* `meta` holds stable shipment context and policy; changing measurements (`temp`, `powerKw`, `doorOpen`) remain outside `meta`.
-* The embedded policy determines whether a reading is outside the permitted range. Notification deadlines, inspection obligations, and recommended responses remain in contracts, SOPs, and manuals retrieved from `knowledge`.
-
-For example, detection compares each reading with its own policy snapshot:
-
-```js
-{
-  $set: {
-    outOfRange: {
-      $or: [
-        { $lt: ["$temp", "$meta.temperaturePolicy.minC"] },
-        { $gt: ["$temp", "$meta.temperaturePolicy.maxC"] }
-      ]
-    }
-  }
-}
-```
-
-A temperature equal to either bound is within range. Validate policy presence and numeric bounds before inserting readings; do not silently substitute the latest cargo default for missing historical policies.
-
-### 2.2 Time Series Collections: Specialized Storage, General-Purpose Queries
-
-* With `timeField` and `metaField` configured, MongoDB groups consecutive measurements with matching metadata into internal buckets and compresses them, reducing storage and I/O for write-heavy sensor data.
-* Queries use the same MQL and aggregation framework as regular collections. No separate time-series query language is required.
-* Detection is implemented through aggregation stages:
-  * Group consecutive out-of-range readings into incidents: `$setWindowFields` + `$shift` (gaps and islands).
-  * Build time-bucketed trends: `$dateTrunc`.
-  * Compare readings with embedded policy bounds: `$lt` / `$gt` against `meta.temperaturePolicy.minC` and `meta.temperaturePolicy.maxC`, without `$lookup`.
-
-### 2.3 Vector Search: Document Retrieval Beside Operational Data
-
-* Contract, SOP, and manual chunks and their embeddings are stored in the same database as sensor data and retrieved using `$vectorSearch`.
-* Vector similarity search and metadata filters (`cargoTypes`, `docType`, `contractId`, `version`) are applied in one stage, excluding another shipper's clauses even when their wording is similar.
-* Because `$vectorSearch` is an aggregation stage, detection and evidence retrieval use the same query interface, driver, and connection.
-
-### 2.4 Aggregation as the Agent's Calculation Engine
-
-LLMs can make calculation errors. The tools in this project therefore use aggregation pipelines for detection and `$vectorSearch` for evidence retrieval. Filtering, policy comparisons, grouping, window operations, and vector search happen in the database; application code passes the results to the LLM. For numerical questions not covered by fixed tools, the LLM generates a pipeline through Text-to-MQL and submits it to the same engine.
-
-### 2.5 Scale-Aware Modeling Without a Sharding Demo
-
-The MVP remains unsharded. Scale awareness is expressed through document boundaries, stable identifiers, bounded queries, and explicit validation criteria—not through an additional deployment requirement.
-
-#### Stable Metadata and Query Scope
-
-* `readings.meta` contains `fleetId`, `reeferId`, `shipmentId`, `cargoType`, and a compact, fixed temperature-policy snapshot. Fleet assignment remains stable for a shipment in the MVP. Routes and other nonessential transport details live in `shipments`; volatile measurements remain outside `meta`.
-* Define `reeferId` and `shipmentId` as globally unique identifiers. Use `fleetId` as an operational query scope, not as an authorization mechanism.
-* Fleet briefings specify a fleet and bounded time window. Reefer investigations specify a reefer and time window; incident calculations separate reefer/shipment series. A fleet-wide query can still require multiple shards after future sharding.
-
-#### Candidate Shard Key and Independent Index Design
-
-If ingestion distribution and reefer-scoped access justify it, evaluate this candidate for `readings`:
-
-```js
-// Future candidate only; no sharding command is part of the MVP.
-{ "meta.reeferId": "hashed" }
-```
-
-This is not a finalized shard key. Evaluate distinct active reefers, per-reefer write skew, retained data distribution, and the balance between reefer, shipment, and fleet queries. A single hot reefer is not split across shards merely by hashing its ID. A fleet-only filter does not guarantee shard targeting with this key. Avoid time-based shard-key assumptions; support and restrictions must be checked against the deployment's MongoDB version.
-
-Shard routing and query indexes are separate design concerns. Evaluate these query-index candidates on the unsharded workload and inspect execution plans before adopting them:
-
-```js
-{ "meta.reeferId": 1, ts: 1 }
-{ "meta.fleetId": 1, ts: 1 }
-// Evaluate a shipment/time index only if shipment queries justify it.
-```
-
-These are proposed patterns, not indexes asserted to exist. Keep indexes that provide measured benefit; unnecessary indexes add ingestion and storage overhead. For any future sharded deployment, inspect where sorting and window calculations execute and measure fan-out and merge costs. More shards do not automatically make fleet briefings faster.
-
-#### Collection-Specific Scaling and Search Freshness
-
-* `readings` is the primary future sharding candidate because it carries the high-volume sensor history. Do not shard `cargo_specs`, `shipments`, or `knowledge` merely because sensor volume grows; evaluate each collection independently.
-* Scale database ingestion/aggregation and document Search capacity independently. Dedicated Search Nodes are optional for this MVP. Contract ID/version filters enforce evidence applicability; they must not be treated as a guarantee of Search shard targeting.
-* Ordinary sensor queries remain outside the Search index path. Index synchronization lag and document version availability must be handled by the evidence-retrieval path, with unresolved assessments when required evidence is unavailable.
-* Define raw-data retention separately from scalability. Time Series expiration can bound retained history; no persisted incident or summary collection is required in this MVP.
-
-#### Evidence Required Before Scale-Out Claims
-
-Measure ingestion throughput, concurrent briefing p95 latency, examined data/buckets, sort/window resource usage, and retained storage on representative workloads. Future sharded tests must also measure per-shard skew and query fan-out; Search tests must measure retrieval latency, index freshness, and cost. If repeated query-time detection becomes the bottleneck, revisit materialized incidents rather than assuming additional shards are sufficient.
-
-MongoDB references: [Time Series best practices](https://www.mongodb.com/docs/manual/core/timeseries/timeseries-best-practices/), [sharding a Time Series collection](https://www.mongodb.com/docs/manual/core/timeseries/timeseries-shard-collection/), and [Vector Search deployment options](https://www.mongodb.com/docs/vector-search/deployment/deployment-options/).
-
-### 2.6 Architecture: One Platform
+Detection, retrieval, and rule evaluation are all pipelines on one driver and one connection. There is no ETL and no metadata sync between systems.
 
 ```text
- Traditional setup                         MongoDB setup
- ┌────────────┐ ┌──────────┐ ┌──────────┐   ┌─────────────────────────────────┐
- │ Time-series│ │Operational│ │ Vector DB│   │             MongoDB             │
- │ DB (sensor)│ │ RDB      │ │(contracts)│   │ readings       cargo_specs       │
- └─────┬──────┘ └────┬─────┘ └────┬─────┘   │ (Time Series)  (regular)        │
-       │             │            │         │ knowledge (chunks + embeddings) │
-       └─ ETL / metadata sync / app joins ─┘│ → aggregation + $vectorSearch   │
-                     │                      └────────────────┬────────────────┘
-                Application                                  │ MQL
-                     │                                  Application
-                    LLM                                      │
-                                                            LLM
+ Typical stack for this workload           MongoDB
+ ┌───────────┐ ┌──────────┐ ┌──────────┐    ┌──────────────────────────────┐
+ │Time-series│ │   RDB    │ │Vector DB │    │ readings   (Time Series)     │
+ │ (sensors) │ │(context, │ │  (text)  │    │ shipments                    │
+ │           │ │  rules)  │ │          │    │ knowledge  (Vector Search)   │
+ └─────┬─────┘ └────┬─────┘ └────┬─────┘    │ clauses · ontology           │
+       └─ ETL · sync · app joins ─┘         └──────────────┬───────────────┘
+                    │                                      │ MQL
+                   App ── LLM                             App ── LLM
 ```
 
-* Co-locating sensor data, operational data, and embeddings avoids cross-database synchronization between these stores. Shipment setup still resolves cargo defaults into the policy snapshots embedded in readings.
-* Shipment changes and contract updates can be handled within the same database without synchronizing metadata to a separate vector database.
-* Future event-driven processing requires a separately designed ingestion path; this MVP does not assume that a Database Trigger can run directly on the Time Series collection.
+---
 
-## 3. Why Is a Standalone Vector Database Not Enough?
+## 3. RAG and Ontology: Why Both
 
-“Put data into a vector database and use RAG” is a common starting point for LLM applications. This project includes RAG, but a vector database alone solves only part of the problem.
+**RAG finds evidence. The ontology turns evidence into rules the database can evaluate.**
 
-### 3.1 Many Questions Require Numerical Computation, Not Semantic Search
-
-“Were there periods above 5°C?”, “How many consecutive minutes?”, and “Which equipment consumed 30% more power than usual?” cannot be answered through embedding similarity. They require exact conditions, time filters, aggregation, and window operations. Vector databases are generally optimized for vector retrieval and simple metadata filtering rather than this combination of operations.
-
-### 3.2 Embedding Sensor Values Is Not a Natural Fit
-
-Turning `{temp: 3.42, powerKw: 2.13}` into a vector does not provide meaningful numerical analysis. Sending raw readings to the LLM instead risks exceeding context limits or incorrect counting. If the fact “24 consecutive minutes outside the permitted range” is wrong, the contract decision built on that fact is also unreliable.
-
-### 3.3 Separate Databases Add Integration Work
-
-Storing time series in a time-series database, cargo specifications in an RDB, and contracts in a vector database introduces the following tradeoffs:
-
-| Concern | Multiple Databases | MongoDB |
+| | RAG (vector search) | Ontology (structured clauses) |
 |---|---|---|
-| Data synchronization | Synchronize shipment and shipper metadata into the vector database | Same database, matching keys |
-| Combining facts and evidence | Combine time-series results and vector retrieval results in application code | Two aggregations through the same query interface |
-| Query language | SQL, a time-series language, and a vector API | MQL |
-| LLM tool design | Separate connections, authentication, and error handling for each system | Shared driver and connection |
-| Operations | Separate backup, monitoring, security, and failure handling | One operational platform |
+| Works on | Sentences | Concepts, relations, conditions |
+| Finds by | Similar meaning | Defined relations |
+| Decides | The LLM, by reading | The database, by comparing values |
+| Strong at | New or open questions | Completeness, same input → same answer |
+| Weak at | Missing related clauses, unstable judgment | Anything not modeled in advance |
 
-### 3.4 Match the Method to the Data, Keep the Platform Unified
+In this project they work together. The ontology decides which clauses are triggered; RAG retrieves their source text for citation and answers questions the rules do not cover.
 
-Use aggregation for accurate numerical analysis and vector search for semantic document retrieval. Different data types need different retrieval methods, but storage and querying remain on one platform. This is the project's core architectural principle.
+### Why a standalone vector database is not enough
 
-## 4. Usage
+- **Most questions are numeric.** "How many consecutive minutes above 4°C?" needs filters, aggregation, and window functions — not embedding similarity.
+- **Sensor values do not embed meaningfully.** Pushing raw readings into the LLM's context leads to miscounts. If "24 consecutive minutes" is wrong, every contract decision built on it is wrong too.
+- **Splitting data across systems adds integration work** — synced metadata, app-side joins, several query languages, and separate operations for each store.
 
-### Requirements
+---
 
-* [uv](https://docs.astral.sh/uv/)
-* MongoDB 5.0 or later (local Docker replica set or Atlas)
-* OpenAI API key (a tool-calling model and an embedding model)
+## 4. Quick Start
 
-### Installation and Execution
+> The code is being rebuilt stage by stage to match this design. See [build plan](./design/build-plan.md) for what works now.
+
+**Requirements:** [uv](https://docs.astral.sh/uv/), MongoDB 5.0+ (Atlas or local), an OpenAI API key.
 
 ```bash
 uv sync
-cp .env.example .env          # Set MONGODB_URI and OPENAI_API_KEY
+cp .env.example .env          # set MONGODB_URI and OPENAI_API_KEY
 
-uv run seed.py                # Sample sensor data: 72 hours × 5 reefers = 21,600 readings
-uv run ingest_docs.py         # Contracts/SOP/manuals → chunks + embeddings → knowledge
+uv run seed.py                # shipments, ontology, clauses, 72 h of readings
+uv run ingest_docs.py         # docs/ → chunks + embeddings → knowledge
 uv run chat.py "Brief me on today's data."
-uv run chat.py                # Interactive mode
+uv run chat.py                # interactive mode
 ```
 
-To inspect detection-tool results without an LLM, run `uv run tools.py`.
-
-### Vector Search Environments
-
-`$vectorSearch` requires an environment with the MongoDB Search engine (`mongot`).
-
-| Environment | Retrieval Method |
+| Variable | Example |
 |---|---|
-| Atlas cluster (including the free tier) | `$vectorSearch` |
-| Atlas local deployment (Atlas CLI / `mongodb-atlas-local` Docker image) | `$vectorSearch` |
-| Regular Community server without Search configured | Automatic application-side cosine similarity fallback |
+| `MONGODB_URI` | `mongodb://localhost:27017/?directConnection=true` |
+| `DB_NAME` | `coldchain_copilot` |
+| `OPENAI_API_KEY` | `sk-...` |
+| `OPENAI_MODEL` | `gpt-5-mini` |
+| `OPENAI_EMBED_MODEL` | `text-embedding-3-small` |
 
-`ingest_docs.py` attempts to create the index and reports when an unsupported environment requires fallback. The `engine` field in search results (`atlas-vector-search` / `local-cosine-fallback`) identifies the retrieval method. The fallback is intended only for demo-scale document sets.
+- **Local replica set in Docker:** use `directConnection=true` to connect straight to the primary.
+- **Vector Search** requires Atlas or the `mongodb-atlas-local` image. On a plain Community server, retrieval falls back to in-app cosine similarity; the `engine` field in search results shows which one ran.
 
-### Environment Variables
+---
 
-| Variable | Description | Example |
-|---|---|---|
-| `MONGODB_URI` | Connection string | `mongodb://localhost:27017/?directConnection=true` |
-| `DB_NAME` | Database name | `coldchain_copilot` |
-| `OPENAI_API_KEY` | OpenAI API key | `sk-...` |
-| `OPENAI_MODEL` | Chat and tool-calling model | `gpt-5-mini` |
-| `OPENAI_EMBED_MODEL` | Document embedding model; rerun `ingest_docs.py` after changing it | `text-embedding-3-small` |
+## 5. Demo
 
-* Local Docker replica set: If member hostnames are registered as container names, the host machine may not resolve them. Use `directConnection=true` to connect directly to the primary port. With authentication enabled, use `mongodb://user:pass@localhost:27017/?directConnection=true&authSource=admin`.
-* Atlas: Add your IP address to Network Access.
+`seed.py` injects these situations relative to the time it runs. Rerun it if testing more than a day later.
 
-### LLM Tools
-
-| Tool | Role | Function | Key Mechanism |
+| Reefer | Cargo (range) | Injected situation | Expected outcome |
 |---|---|---|---|
-| `get_fleet_overview` | Detection | Summarize temperature, power, and door status by reefer and shipment | `$group`; embedded temperature-policy bounds |
-| `find_excursions` | Detection | Compare readings with embedded policy bounds and group consecutive out-of-range readings into incidents per reefer and shipment | `$lt` / `$gt`, `$setWindowFields` + `$shift`; no `$lookup` |
-| `find_energy_anomalies` | Detection | Compare recent average power with the preceding 48 hours | `$group` + `$cond` |
-| `get_reefer_timeline` | Detection | Retrieve time-bucketed temperature and power trends for a reefer | `$dateTrunc` |
-| `search_knowledge` | Evidence | Retrieve relevant contract, SOP, and manual clauses | `$vectorSearch` + metadata filters |
-| `run_aggregation` | Ad hoc query | Answer numerical questions not covered by fixed tools (Text-to-MQL) | Read-only; prohibit `$out`/`$merge`; enforce `maxTimeMS` |
+| RF-02 | Live fish (0–4°C) | Compressor stops 30 min → ~24 min excursion | Notify within 1 h (Art. 6) → inspection (Art. 7). Refusal at ≥ 30 min (Art. 8) does **not** apply. |
+| RF-03 | Frozen tuna (−60 to −50°C) | Door open 15 min during unloading → ~18 min excursion | Notify within 30 min, flesh-color inspection, 10-min door limit violated. |
+| RF-04 | Frozen shrimp (−25 to −18°C) | Normal temperature, power rising over 24 h | Report equipment abnormality within 24 h, despite no excursion. |
+| RF-05 | Oysters (1–5°C) | Normal temperature; contract also requires humidity | **Needs confirmation**: humidity is not collected. |
+| RF-01 | Live fish (0–4°C) | Normal | — |
 
-### Sample Documents (`docs/`)
+Try the levels in order:
 
-| Document | Scope | Clauses Used in the Demo |
-|---|---|---|
-| BlueHarbor Fisheries Live Fish Transport Contract | SHP-101, SHP-102 / live fish | Notify within 1 hour for excursions lasting at least 15 consecutive minutes; quality inspection; refusal of delivery at 30 cumulative minutes or more |
-| OceanPeak Tuna Trading Ultra-Low-Temperature Tuna Transport Contract | SHP-103 / frozen tuna | Notify within 30 minutes when temperature exceeds -50°C; flesh-color inspection at 10 cumulative minutes or more; 10-minute door-opening limit |
-| CoastalFresh Seafood Frozen Shrimp Transport Contract | SHP-104 / frozen shrimp | Notify within 24 hours of signs of equipment abnormality and provide a backup equipment plan |
-| Cold-Chain Temperature Excursion Response SOP | Shared | Cause classification; refrigeration shutdown and door-opening response; incident report within 24 hours |
-| Reefer Preventive Maintenance Manual | Shared | Power increase thresholds of +20%/+40%; inspection of equipment with shutdown history |
+1. *Where is SHP-102 going?*
+2. *Show me RF-02's temperature today. Why did it go out of range?*
+3. *How long may the door stay open while unloading tuna?*
+4. *Brief me on today's data.*
+5. *What must we do for RF-02? Could they refuse delivery?* · *Any contract issue for SHP-105?*
 
-All documents are fictional demo materials to be authored as MVP deliverables. Frontmatter, delimited by `---`, defines `docType`, `cargoTypes`, document identity, and version; contract documents also define `contractId`. Ingestion propagates this metadata to chunks. Shipment applicability is managed through `shipments.contractRef`, not shipment-ID arrays in document frontmatter or chunks. The scope column above describes demo assignments, not the chunk schema. To use your own documents, add them to `docs/` in the same format and rerun `ingest_docs.py`.
+All companies, contracts, SOPs, and manuals are fictional demo material.
 
-### Demo Scenarios
+---
 
-`seed.py` injects the following situations relative to its execution time. Sensor facts are designed to match contract conditions.
-
-| Reefer | Cargo (Permitted Range) | Injected Situation | Expected Action Required |
-|---|---|---|---|
-| RF-02 | Live fish (0–4°C) | Refrigeration stops for 30 minutes about 5 hours ago → approximately 24 minutes of excursion | Notify within 1 hour and arrange quality inspection because the excursion lasts at least 15 minutes. Delivery-refusal condition does not apply because it is under 30 minutes. |
-| RF-03 | Frozen tuna (-60 to -50°C) | Door open for 15 minutes during unloading about 3 hours ago → approximately 18 minutes of excursion | Notify within 30 minutes and arrange flesh-color inspection. The 10-minute door limit is violated. |
-| RF-04 | Frozen shrimp (-25 to -18°C) | Temperature normal; power consumption increases over the last 24 hours | Notify within 24 hours of signs of equipment abnormality despite no temperature excursion. |
-| RF-01, RF-05 | Live fish, fresh oysters | Normal | None |
-
-Scenarios are timestamped relative to the seed execution time. If testing more than a day later, rerun `uv run seed.py`. Rerun `ingest_docs.py` only when documents change.
-
-### Example Question Flow
-
-1. Briefing — Brief me on today's data.
-2. Query — Which readings exceeded their permitted ranges?
-3. History — Show me RF-02's temperature changes today.
-4. Root-cause analysis — Why did this happen to RF-02?
-5. Contract assessment — Do we need to notify the shipper for RF-02? Could they refuse delivery?
-6. Prevention — Are any reefers using unusually high power despite normal temperatures? Are there contractual actions we need to take?
-7. Document question — How long may the door remain open while unloading tuna?
-
-The demo's core flow progresses from simple queries to root-cause analysis, contract assessment, and preventive action.
-
-### Project Structure
+## 6. Project Structure
 
 ```text
 coldchain-copilot/
-├── design/            Core entity and interface definitions (see Section 5)
-├── docs/              RAG documents: contracts, SOP, maintenance manual, with metadata frontmatter
-├── seed.py            Create cargo defaults and fleet-scoped shipments; pin policies/contracts; backfill 72 hours of readings with policy snapshots
-├── ingest_docs.py     Chunk documents → embed → store in knowledge; create Vector Search index
-├── knowledge.py       Document parsing, embedding, retrieval ($vectorSearch or fallback)
-├── tools.py           LLM tools: detection aggregations + search_knowledge
-├── chat.py            OpenAI tool-calling loop and system prompt (Action Required / Suggestion)
-├── pyproject.toml
-├── uv.lock
-└── .env.example
+├── docs/            Contracts, SOP, maintenance manual (RAG sources)
+├── design/          Detailed design (see below)
+├── seed.py          Shipments, ontology, clauses, and readings with policy snapshots
+├── ingest_docs.py   Chunk, embed, and load documents; create the Vector Search index
+├── knowledge.py     Document retrieval ($vectorSearch, with fallback)
+├── tools.py         LLM tools: lookup, detection, retrieval, rule evaluation
+└── chat.py          Tool-calling loop and system prompt
 ```
+
+| Design document | Contents |
+|---|---|
+| [`design/entities.md`](./design/entities.md) | Collections, document schemas, seeded data |
+| [`design/ontology.md`](./design/ontology.md) | Classes, relations, measures, rule format, evaluation |
+| [`design/interfaces.md`](./design/interfaces.md) | Tools by level, parameters, return shapes, errors, briefing format |
+| [`design/decisions/MVP-001.md`](./design/decisions/MVP-001.md) | Query-time detection on embedded policy snapshots |
+| [`design/decisions/MVP-002.md`](./design/decisions/MVP-002.md) | Clauses as rules: a minimal ontology |
+| [`design/scaling.md`](./design/scaling.md) | Shard-key and index candidates, what to measure before scaling |
+| [`design/build-plan.md`](./design/build-plan.md) | Stages, migration from the prototype, learning checkpoints |
