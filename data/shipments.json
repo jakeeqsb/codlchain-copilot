@@ -1,0 +1,26 @@
+[
+  { "shipmentId": "SHP-101", "fleetId": "FLEET-01", "reeferId": "RF-01", "shipperId": "blueharbor",
+    "cargoType": "cargo:live_fish",
+    "route": { "origin": "Harbor City", "destination": "Central Seafood Market" },
+    "contractRef": { "contractId": "blueharbor-live-fish", "version": "v1" } },
+
+  { "shipmentId": "SHP-102", "fleetId": "FLEET-01", "reeferId": "RF-02", "shipperId": "blueharbor",
+    "cargoType": "cargo:live_fish",
+    "route": { "origin": "South Port", "destination": "Central Seafood Market" },
+    "contractRef": { "contractId": "blueharbor-live-fish", "version": "v1" } },
+
+  { "shipmentId": "SHP-103", "fleetId": "FLEET-01", "reeferId": "RF-03", "shipperId": "oceanpeak",
+    "cargoType": "cargo:frozen_tuna",
+    "route": { "origin": "Deepwater Terminal", "destination": "North Cold Storage" },
+    "contractRef": { "contractId": "oceanpeak-tuna", "version": "v1" } },
+
+  { "shipmentId": "SHP-104", "fleetId": "FLEET-01", "reeferId": "RF-04", "shipperId": "coastalfresh",
+    "cargoType": "cargo:frozen_shrimp",
+    "route": { "origin": "West Harbor", "destination": "Inland Distribution Center" },
+    "contractRef": { "contractId": "coastalfresh-shrimp", "version": "v1" } },
+
+  { "shipmentId": "SHP-105", "fleetId": "FLEET-01", "reeferId": "RF-05", "shipperId": "tidalpearl",
+    "cargoType": "cargo:oyster",
+    "route": { "origin": "Tidal Bay", "destination": "Riverside Market" },
+    "contractRef": { "contractId": "tidalpearl-oyster", "version": "v1" } }
+]
