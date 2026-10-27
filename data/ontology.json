@@ -1,0 +1,78 @@
+[
+  { "_id": "cargo:seafood",        "kind": "class", "parent": null,                   "ancestors": [] },
+  { "_id": "cargo:live_seafood",   "kind": "class", "parent": "cargo:seafood",        "ancestors": ["cargo:seafood"] },
+  { "_id": "cargo:frozen_seafood", "kind": "class", "parent": "cargo:seafood",        "ancestors": ["cargo:seafood"] },
+  { "_id": "cargo:live_fish",      "kind": "class", "parent": "cargo:live_seafood",   "ancestors": ["cargo:live_seafood", "cargo:seafood"] },
+  { "_id": "cargo:oyster",         "kind": "class", "parent": "cargo:live_seafood",   "ancestors": ["cargo:live_seafood", "cargo:seafood"] },
+  { "_id": "cargo:frozen_tuna",    "kind": "class", "parent": "cargo:frozen_seafood", "ancestors": ["cargo:frozen_seafood", "cargo:seafood"] },
+  { "_id": "cargo:frozen_shrimp",  "kind": "class", "parent": "cargo:frozen_seafood", "ancestors": ["cargo:frozen_seafood", "cargo:seafood"] },
+
+  { "_id": "event:incident",         "kind": "class", "parent": null, "ancestors": [] },
+  { "_id": "event:equipment_signal", "kind": "class", "parent": null, "ancestors": [] },
+
+  { "_id": "event:temperature_excursion", "kind": "class", "parent": "event:incident", "ancestors": ["event:incident"],
+    "requiresFields": ["temp"],
+    "detect": {
+      "pattern": "run",
+      "match": { "$expr": { "$or": [
+        { "$gt": ["$temp", "$meta.temperaturePolicy.maxC"] },
+        { "$lt": ["$temp", "$meta.temperaturePolicy.minC"] } ] } },
+      "durationAs": "consecutiveMinutes",
+      "cumulativeAs": "cumulativeMinutes",
+      "summary": {
+        "peakTemp":   { "$max": "$temp" },
+        "lowestTemp": { "$min": "$temp" },
+        "direction":  { "$first": { "$cond": [ { "$gt": ["$temp", "$meta.temperaturePolicy.maxC"] }, "above", "below" ] } }
+      },
+      "causeFrom": ["event:compressor_stop", "event:door_opening"]
+    } },
+
+  { "_id": "event:door_opening", "kind": "class", "parent": "event:incident", "ancestors": ["event:incident"],
+    "requiresFields": ["doorOpen"],
+    "detect": { "pattern": "run", "match": { "doorOpen": true }, "durationAs": "doorOpenMinutes" } },
+
+  { "_id": "event:compressor_stop", "kind": "class", "parent": "event:incident", "ancestors": ["event:incident"],
+    "requiresFields": ["powerKw"],
+    "detect": { "pattern": "run", "match": { "powerKw": { "$lt": 0.1 } }, "durationAs": "stopMinutes" } },
+
+  { "_id": "event:humidity_breach", "kind": "class", "parent": "event:incident", "ancestors": ["event:incident"],
+    "requiresFields": ["humidityPct"],
+    "detect": { "pattern": "run", "match": { "humidityPct": { "$lt": 90 } }, "durationAs": "humidityMinutes",
+                "summary": { "minHumidityPct": { "$min": "$humidityPct" } } } },
+
+  { "_id": "event:power_anomaly", "kind": "class", "parent": "event:equipment_signal", "ancestors": ["event:equipment_signal"],
+    "requiresFields": ["powerKw"],
+    "detect": { "pattern": "trend", "field": "powerKw", "recentHours": 24, "baselineHours": 48, "changeAs": "powerChangePct" } },
+
+  { "_id": "measure:consecutiveMinutes", "kind": "measure", "eventType": "event:temperature_excursion", "unit": "min" },
+  { "_id": "measure:cumulativeMinutes",  "kind": "measure", "eventType": "event:temperature_excursion", "unit": "min" },
+  { "_id": "measure:peakTemp",           "kind": "measure", "eventType": "event:temperature_excursion", "unit": "C" },
+  { "_id": "measure:lowestTemp",         "kind": "measure", "eventType": "event:temperature_excursion", "unit": "C" },
+  { "_id": "measure:direction",          "kind": "measure", "eventType": "event:temperature_excursion", "values": ["above", "below"] },
+  { "_id": "measure:cause",              "kind": "measure", "eventType": "event:temperature_excursion", "values": ["cause:compressor_stop", "cause:door_opening", "cause:unknown"] },
+  { "_id": "measure:doorOpenMinutes",    "kind": "measure", "eventType": "event:door_opening",          "unit": "min" },
+  { "_id": "measure:stopMinutes",        "kind": "measure", "eventType": "event:compressor_stop",       "unit": "min" },
+  { "_id": "measure:humidityMinutes",    "kind": "measure", "eventType": "event:humidity_breach",       "unit": "min" },
+  { "_id": "measure:minHumidityPct",     "kind": "measure", "eventType": "event:humidity_breach",       "unit": "%" },
+  { "_id": "measure:powerChangePct",     "kind": "measure", "eventType": "event:power_anomaly",         "unit": "%" },
+
+  { "_id": "rel:assignedTo",  "kind": "relation", "domain": "Reefer",          "range": "Shipment",        "storedAt": "shipments.reeferId" },
+  { "_id": "rel:governedBy",  "kind": "relation", "domain": "Shipment",        "range": "ContractVersion", "storedAt": "shipments.contractRef" },
+  { "_id": "rel:hasClause",   "kind": "relation", "domain": "ContractVersion", "range": "Clause",          "storedAt": "clauses.contractId + clauses.version" },
+  { "_id": "rel:appliesTo",   "kind": "relation", "domain": "Clause",          "range": "CargoClass",      "storedAt": "clauses.appliesTo" },
+  { "_id": "rel:triggeredBy", "kind": "relation", "domain": "Clause",          "range": "EventClass",      "storedAt": "clauses.trigger.eventType" },
+  { "_id": "rel:references",  "kind": "relation", "domain": "Clause",          "range": "Clause",          "storedAt": "clauses.references" },
+
+  { "_id": "action:notify",   "kind": "action" },
+  { "_id": "action:inspect",  "kind": "action" },
+  { "_id": "action:hold",     "kind": "action" },
+  { "_id": "action:report",   "kind": "action" },
+  { "_id": "action:maintain", "kind": "action" },
+  { "_id": "action:retrain",  "kind": "action" },
+
+  { "_id": "party:shipper.qa",        "kind": "party" },
+  { "_id": "party:shipper.logistics", "kind": "party" },
+  { "_id": "party:ops.driver",        "kind": "party" },
+  { "_id": "party:ops.maintenance",   "kind": "party" },
+  { "_id": "party:ops.qa",            "kind": "party" }
+]

@@ -1,0 +1,118 @@
+[
+  { "clauseId": "blueharbor-live-fish-v1-art6", "chunkId": "blueharbor-live-fish-v1-article-6",
+    "contractId": "blueharbor-live-fish", "version": "v1", "kind": "obligation", "appliesTo": ["cargo:live_fish"],
+    "trigger": { "eventType": "event:temperature_excursion", "allOf": [
+      { "measure": "direction", "op": "eq", "value": "above" },
+      { "measure": "consecutiveMinutes", "op": "gte", "value": 15 } ] },
+    "action": { "type": "notify", "party": "shipper.qa" },
+    "deadline": { "anchor": "eventStart", "offsetMinutes": 60 },
+    "references": [], "review": { "status": "approved" } },
+
+  { "clauseId": "blueharbor-live-fish-v1-art7", "chunkId": "blueharbor-live-fish-v1-article-7",
+    "contractId": "blueharbor-live-fish", "version": "v1", "kind": "obligation", "appliesTo": ["cargo:live_fish"],
+    "trigger": { "clauseTriggered": "blueharbor-live-fish-v1-art6" },
+    "action": { "type": "inspect", "party": "shipper.qa", "before": "unloading" },
+    "references": ["blueharbor-live-fish-v1-art6"], "review": { "status": "approved" } },
+
+  { "clauseId": "blueharbor-live-fish-v1-art8", "chunkId": "blueharbor-live-fish-v1-article-8",
+    "contractId": "blueharbor-live-fish", "version": "v1", "kind": "obligation", "appliesTo": ["cargo:live_fish"],
+    "trigger": { "eventType": "event:temperature_excursion", "allOf": [
+      { "measure": "direction", "op": "eq", "value": "above" },
+      { "measure": "cumulativeMinutes", "op": "gte", "value": 30 } ] },
+    "action": { "type": "hold", "party": "ops.driver" },
+    "references": [], "review": { "status": "approved" } },
+
+  { "clauseId": "oceanpeak-tuna-v1-art5", "chunkId": "oceanpeak-tuna-v1-article-5",
+    "contractId": "oceanpeak-tuna", "version": "v1", "kind": "obligation", "appliesTo": ["cargo:frozen_tuna"],
+    "trigger": { "eventType": "event:temperature_excursion", "allOf": [
+      { "measure": "direction", "op": "eq", "value": "above" },
+      { "measure": "consecutiveMinutes", "op": "gte", "value": 1 } ] },
+    "action": { "type": "notify", "party": "shipper.logistics" },
+    "deadline": { "anchor": "eventStart", "offsetMinutes": 30 },
+    "references": [], "review": { "status": "approved" } },
+
+  { "clauseId": "oceanpeak-tuna-v1-art6", "chunkId": "oceanpeak-tuna-v1-article-6",
+    "contractId": "oceanpeak-tuna", "version": "v1", "kind": "obligation", "appliesTo": ["cargo:frozen_tuna"],
+    "trigger": { "eventType": "event:temperature_excursion", "allOf": [
+      { "measure": "direction", "op": "eq", "value": "above" },
+      { "measure": "cumulativeMinutes", "op": "gte", "value": 10 } ] },
+    "action": { "type": "inspect", "party": "shipper.logistics" },
+    "references": [], "review": { "status": "approved" } },
+
+  { "clauseId": "oceanpeak-tuna-v1-art7", "chunkId": "oceanpeak-tuna-v1-article-7",
+    "contractId": "oceanpeak-tuna", "version": "v1", "kind": "obligation", "appliesTo": ["cargo:frozen_tuna"],
+    "trigger": { "eventType": "event:door_opening", "allOf": [
+      { "measure": "doorOpenMinutes", "op": "gt", "value": 10 } ] },
+    "action": { "type": "report", "party": "shipper.logistics" },
+    "deadline": { "anchor": "eventStart", "offsetMinutes": 1440 },
+    "references": [], "review": { "status": "approved" } },
+
+  { "clauseId": "coastalfresh-shrimp-v1-art5", "chunkId": "coastalfresh-shrimp-v1-article-5",
+    "contractId": "coastalfresh-shrimp", "version": "v1", "kind": "obligation", "appliesTo": ["cargo:frozen_shrimp"],
+    "trigger": { "eventType": "event:power_anomaly", "allOf": [
+      { "measure": "powerChangePct", "op": "gte", "value": 20 } ] },
+    "action": { "type": "report", "party": "shipper.logistics" },
+    "deadline": { "anchor": "eventEnd", "offsetMinutes": 1440 },
+    "references": [], "review": { "status": "approved" } },
+
+  { "clauseId": "tidalpearl-oyster-v1-art5", "chunkId": "tidalpearl-oyster-v1-article-5",
+    "contractId": "tidalpearl-oyster", "version": "v1", "kind": "obligation", "appliesTo": ["cargo:oyster"],
+    "trigger": { "eventType": "event:humidity_breach", "allOf": [
+      { "measure": "humidityMinutes", "op": "gte", "value": 30 } ] },
+    "action": { "type": "notify", "party": "shipper.qa" },
+    "deadline": { "anchor": "eventStart", "offsetMinutes": 120 },
+    "references": [], "review": { "status": "approved" } },
+
+  { "clauseId": "tidalpearl-oyster-v1-art6", "chunkId": "tidalpearl-oyster-v1-article-6",
+    "contractId": "tidalpearl-oyster", "version": "v1", "kind": "obligation", "appliesTo": ["cargo:oyster"],
+    "trigger": { "eventType": "event:temperature_excursion", "allOf": [
+      { "measure": "direction", "op": "eq", "value": "above" },
+      { "measure": "consecutiveMinutes", "op": "gte", "value": 20 } ] },
+    "action": { "type": "notify", "party": "shipper.qa" },
+    "deadline": { "anchor": "eventStart", "offsetMinutes": 60 },
+    "references": [], "review": { "status": "approved" } },
+
+  { "clauseId": "sop-excursion-response-v1-sec2", "chunkId": "sop-excursion-response-v1-section-2",
+    "contractId": null, "version": "v1", "kind": "recommendation", "appliesTo": ["cargo:seafood"],
+    "trigger": { "eventType": "event:compressor_stop", "allOf": [
+      { "measure": "stopMinutes", "op": "gte", "value": 1 } ] },
+    "action": { "type": "maintain", "party": "ops.maintenance" },
+    "references": [], "review": { "status": "approved" } },
+
+  { "clauseId": "sop-excursion-response-v1-sec3", "chunkId": "sop-excursion-response-v1-section-3",
+    "contractId": null, "version": "v1", "kind": "recommendation", "appliesTo": ["cargo:seafood"],
+    "trigger": { "eventType": "event:door_opening", "allOf": [
+      { "measure": "doorOpenMinutes", "op": "gt", "value": 10 } ] },
+    "action": { "type": "retrain", "party": "ops.qa" },
+    "references": [], "review": { "status": "approved" } },
+
+  { "clauseId": "sop-excursion-response-v1-sec4", "chunkId": "sop-excursion-response-v1-section-4",
+    "contractId": null, "version": "v1", "kind": "recommendation", "appliesTo": ["cargo:seafood"],
+    "trigger": { "eventType": "event:temperature_excursion", "allOf": [
+      { "measure": "consecutiveMinutes", "op": "gte", "value": 1 } ] },
+    "action": { "type": "report", "party": "ops.qa" },
+    "deadline": { "anchor": "eventStart", "offsetMinutes": 1440 },
+    "references": [], "review": { "status": "approved" } },
+
+  { "clauseId": "manual-reefer-maintenance-v1-sec2", "chunkId": "manual-reefer-maintenance-v1-section-2",
+    "contractId": null, "version": "v1", "kind": "recommendation", "appliesTo": ["cargo:seafood"],
+    "trigger": { "eventType": "event:power_anomaly", "allOf": [
+      { "measure": "powerChangePct", "op": "gte", "value": 20 } ] },
+    "action": { "type": "maintain", "party": "ops.maintenance" },
+    "deadline": { "anchor": "eventEnd", "offsetMinutes": 2880 },
+    "references": [], "review": { "status": "approved" } },
+
+  { "clauseId": "manual-reefer-maintenance-v1-sec3", "chunkId": "manual-reefer-maintenance-v1-section-3",
+    "contractId": null, "version": "v1", "kind": "recommendation", "appliesTo": ["cargo:seafood"],
+    "trigger": { "eventType": "event:power_anomaly", "allOf": [
+      { "measure": "powerChangePct", "op": "gte", "value": 40 } ] },
+    "action": { "type": "hold", "party": "ops.maintenance" },
+    "references": [], "review": { "status": "approved" } },
+
+  { "clauseId": "manual-reefer-maintenance-v1-sec4", "chunkId": "manual-reefer-maintenance-v1-section-4",
+    "contractId": null, "version": "v1", "kind": "recommendation", "appliesTo": ["cargo:seafood"],
+    "trigger": { "eventType": "event:compressor_stop", "allOf": [
+      { "measure": "stopMinutes", "op": "gte", "value": 1 } ] },
+    "action": { "type": "maintain", "party": "ops.maintenance" },
+    "references": [], "review": { "status": "approved" } }
+]

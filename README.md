@@ -1,6 +1,6 @@
 # ColdChain Copilot
 
-An operations agent for cold-chain logistics. It reads reefer sensor data, checks it against shipper contracts and SOPs, and tells operators **what happened and what to do next**.
+An operations agent for cold-chain logistics. It reads reefer sensor data, checks it against shipper contracts and SOPs (standard operating procedures), and tells operators **what happened and what to do next**.
 
 *MongoDB Solo Project · Time Series × Vector Search × Ontology × LLM tool calling*
 
@@ -69,91 +69,74 @@ The facts live in sensor data; the rules live in documents. ColdChain Copilot co
 
 ## 2. Why MongoDB
 
-The agent needs four kinds of data at once: sensor time series, shipment context, documents with embeddings, and rules. MongoDB holds them in one document model, one query language, and one cluster.
+Every answer this agent gives combines four things: sensor facts, shipment context, contract text, and rules. MongoDB keeps all four in one database, so each answer is one query path instead of an integration between systems.
 
 ```js
 // shipments — who, what, which policy, which contract
-{ shipmentId: "SHP-102", fleetId: "FLEET-01", reeferId: "RF-02", cargoType: "live_fish",
-  temperaturePolicy: { minC: 0, maxC: 4, policyVersion: "SHP-102-policy-v1" },
-  contractRef: { contractId: "blueharbor-live-fish", version: "v1" } }
+{
+  shipmentId: "SHP-102",
+  fleetId: "FLEET-01",
+  reeferId: "RF-02",
+  cargoType: "cargo:live_fish",
+  temperaturePolicy: {
+    minC: 0,
+    maxC: 4,
+    policyVersion: "SHP-102-policy-v1"
+  },
+  contractRef: {
+    contractId: "blueharbor-live-fish",
+    version: "v1"
+  }
+}
 
 // readings (Time Series) — measurements + stable context in meta
-{ ts: ISODate("2026-10-15T00:12:00Z"),
-  meta: { fleetId: "FLEET-01", reeferId: "RF-02", shipmentId: "SHP-102", cargoType: "live_fish",
-          temperaturePolicy: { minC: 0, maxC: 4, policyVersion: "SHP-102-policy-v1" } },
-  temp: 3.42, powerKw: 2.13, doorOpen: false }
+{
+  ts: ISODate("2026-10-15T00:12:00Z"),
+  meta: {
+    fleetId: "FLEET-01",
+    reeferId: "RF-02",
+    shipmentId: "SHP-102",
+    temperaturePolicy: {
+      minC: 0,
+      maxC: 4,
+      policyVersion: "SHP-102-policy-v1"
+    }
+  },
+  temp: 3.42,
+  powerKw: 2.13,
+  doorOpen: false
+}
 
 // clauses — a contract article as a rule, linked to its source text
-{ clauseId: "blueharbor-live-fish-v1-art6", contractId: "blueharbor-live-fish", version: "v1",
-  trigger: { eventType: "event:temperature_excursion",
-             allOf: [ { measure: "consecutiveMinutes", op: "gte", value: 15 } ] },
-  action: { type: "notify", party: "shipper.qa" },
-  deadline: { anchor: "eventStart", offsetMinutes: 60 },
-  chunkId: "blueharbor-live-fish-v1-article-6" }
+{
+  clauseId: "blueharbor-live-fish-v1-art6",
+  contractId: "blueharbor-live-fish",
+  version: "v1",
+  trigger: {
+    eventType: "event:temperature_excursion",
+    allOf: [
+      { measure: "consecutiveMinutes", op: "gte", value: 15 }
+    ]
+  },
+  action: {
+    type: "notify",
+    party: "shipper.qa"
+  },
+  deadline: {
+    anchor: "eventStart",
+    offsetMinutes: 60
+  },
+  chunkId: "blueharbor-live-fish-v1-article-6"
+}
 ```
 
-### 2.1 Document Model: The Data Is Shaped Like Documents
+**Documents match the data.** A shipment is read as one object with its route, policy, and contract reference. Each reading carries its shipment's temperature policy (Extended Reference pattern), so detection needs no join and past readings keep the threshold they were recorded under. Clauses of different shapes share one collection (polymorphic documents), and new sensors or fields need no migration (flexible schema).
 
-The question is not "can a relational schema store this?" — it can. The question is which model matches the shape of this data and the way the agent reads it.
+**Time Series is built in.** Minute-level readings are stored in compressed buckets for efficient writes and storage, and queried with the same aggregation framework that turns consecutive out-of-range readings into excursions.
 
-**Each business object is read whole.** An operator asks about *a shipment* or *an excursion*, not about rows. A shipment, with its route, resolved policy, and contract reference, is one document; the agent gets everything it needs in one read and passes it to the LLM as-is. In a normalized schema the same answer is a join across shipments, routes, policies, and contracts, reassembled in application code before the LLM can see it.
+**Vector Search sits beside the data.** Contract chunks are searched by meaning and filtered by the contract version stored on the shipment, so there is no metadata to copy into a separate vector store and keep in sync.
 
-**Point-in-time context belongs with the fact.** A reading is only meaningful together with the threshold that applied *when it was recorded*. Embedding the policy snapshot in each reading makes that relationship permanent and join-free. The relational equivalent is an effective-dated policy table and a temporal join on every detection query — more work, and easier to get wrong when a default changes.
-
-**Rules are not uniform.** Every contract has different articles, and each article has a different number of conditions, its own action, and an optional deadline or dependency. As documents, each clause stores exactly its own structure — a `trigger.allOf` array of any length, nested `action` and `deadline`. In tables this becomes either many nullable columns or a generic attribute–value table that is hard to query and validate.
-
-**The schema evolves with the domain.** Adding a humidity sensor, a new event type, or a contract field is a new field, not a migration across every table that references it. That matters in IoT, where payloads differ by vendor and change over time.
-
-### 2.2 Time Series: Efficient Storage, Ordinary Queries
-
-Readings with the same `meta` are grouped into compressed buckets, so the policy snapshot is stored once per bucket, not once per reading, and indexes point to buckets rather than individual readings. Queries still use the standard aggregation framework: `$setWindowFields` turns consecutive out-of-range readings into events, and `$dateTrunc` builds trends. There is no separate time-series query language and no separate store to synchronize.
-
-### 2.3 Vector Search: Retrieval Beside the Data
-
-Document chunks and embeddings live in the same database as shipments. `$vectorSearch` combines semantic similarity with filters on `contractId` and `version` in one stage, so a similar clause from another shipper's contract is never used as evidence — and the filter values come from the shipment document, not from metadata copied into a separate vector store.
-
-### 2.4 Graphs: What MongoDB Handles Here, and Where a Graph Database Fits
-
-MongoDB is not a graph database and this project does not claim to replace one. The point is narrower: **the graph in this demo is small, shallow, and attached to operational documents**, which is the case where modeling it in MongoDB is the better choice.
-
-**Where MongoDB is the right place for the graph (this demo)**
-
-| Relationship | Shape | How it is handled |
-|---|---|---|
-| Shipment → contract version | 1 hop | A field: `shipments.contractRef` |
-| Cargo class → parent classes | Fixed, rarely changes | Precomputed `ancestors` array, matched with `$in` |
-| Clause → clause it depends on | 1–2 hops | `$graphLookup` on `clauses.references` |
-
-These relationships share three properties:
-- **Every traversal starts from an operational fact** — this shipment, this excursion — and the result is combined with sensor facts in the same pipeline.
-- **Depth is small and bounded.** Nothing here needs more than two hops.
-- **Edges are attributes of documents that already exist.** No separate edge store, no synchronization, no second consistency problem.
-
-**Where MongoDB's graph support stops**
-
-`$graphLookup` follows one connection field recursively from a set of starting documents, within a per-stage memory limit. It does not provide:
-- Shortest-path or weighted-path queries
-- Variable-length pattern matching across several edge types in one query (for example Reefer → Compressor model → Part batch → Supplier → other Reefers)
-- Graph algorithms such as centrality, community detection, or propagation scoring
-- Ontology reasoning: inferring new facts from class and property definitions (RDF/OWL-style)
-
-As depth, fan-out, and the number of edge types grow, each hop becomes another index lookup inside an aggregation stage. A graph database stores adjacency natively and is built for exactly these queries.
-
-**When to add a graph database, and how to split the work**
-
-If the product grows into questions like *"Which in-transit shipments share a compressor part batch with RF-02, and through which depots and suppliers?"* or *"Which depot is the most common point of failure across incidents this quarter?"*, those are path and network-analysis questions. A sensible split:
-
-| Responsibility | Where | Why |
-|---|---|---|
-| Sensor history, shipments, documents, embeddings, per-shipment rule evaluation | MongoDB (system of record) | Read and written as documents; high write volume; queried by time and scope |
-| Equipment/supplier/depot network, multi-hop impact paths, graph analytics | Graph database | Relationship-centric, variable depth, needs path algorithms |
-| Connecting the two | IDs as the shared key; the graph holds a projection of relationships, MongoDB holds the full records | The graph answers "which entities"; MongoDB answers "what do we know about them" |
-
-For the MVP, every question stays in MongoDB's range, so no graph database is needed. The design keeps stable IDs on every entity so a graph projection can be added later without remodeling.
-
-### 2.5 One Platform
-
-Detection, retrieval, and rule evaluation are all pipelines on one driver and one connection. There is no ETL and no metadata sync between systems.
+**Graph relations stay inside, where they are shallow.** Clause dependencies are one or two hops, followed with `$graphLookup`. Network-scale analysis would call for a graph database alongside MongoDB, not instead of it.
 
 ```text
  Typical stack for this workload           MongoDB
@@ -167,33 +150,51 @@ Detection, retrieval, and rule evaluation are all pipelines on one driver and on
                    App ── LLM                             App ── LLM
 ```
 
+Detailed rationale and tradeoffs: [`design/decisions.md`](./design/decisions.md) and [`design/entities.md`](./design/entities.md).
+
 ---
 
-## 3. RAG and Ontology: Why Both
+## 3. From Retrieval to Decisions: Why an Ontology
 
-**RAG finds evidence. The ontology turns evidence into rules the database can evaluate.**
+In the five question levels of [§ 1](#1-what-it-does), RAG covers level 3, document search: *"what does the contract say?"* A briefing also needs level 5, rule decisions: *"what must we do, and by when?"* That is a judgment, and in this domain a wrong one has a cost: a missed notification deadline means paying for the freight and the lost cargo. An ontology is what turns retrieved text into decisions the system can make consistently.
 
-| | RAG (vector search) | Ontology (structured clauses) |
-|---|---|---|
-| Works on | Sentences | Concepts, relations, conditions |
-| Finds by | Similar meaning | Defined relations |
-| Decides | The LLM, by reading | The database, by comparing values |
-| Strong at | New or open questions | Completeness, same input → same answer |
-| Weak at | Missing related clauses, unstable judgment | Anything not modeled in advance |
+### What happens with RAG alone
 
-In this project they work together. The ontology decides which clauses are triggered; RAG retrieves their source text for citation and answers questions the rules do not cover.
+RAG finds contract passages that look similar to the question, shows them to the LLM, and lets the LLM read them and answer. It is like pulling a few pages that seem relevant out of a contract and handing them to a new hire to decide. Ask about RF-02 (above 4°C for 24 minutes in a row), and three things can go wrong.
 
-### Why a standalone vector database is not enough
+**1. It misses a clause it should have found.**
+Ask "do we need to notify the shipper?" and it finds Article 6, which contains the word "notify." But Article 7 only says "if Article 6 applies, inspect the cargo before unloading," with nothing like "notify" in it. It can be left out of the search, and the cargo gets unloaded without inspection.
 
-- **Most questions are numeric.** "How many consecutive minutes above 4°C?" needs filters, aggregation, and window functions — not embedding similarity.
-- **Sensor values do not embed meaningfully.** Pushing raw readings into the LLM's context leads to miscounts. If "24 consecutive minutes" is wrong, every contract decision built on it is wrong too.
-- **Splitting data across systems adds integration work** — synced metadata, app-side joins, several query languages, and separate operations for each store.
+**2. The same question gets different answers.**
+Article 6 requires "15 consecutive minutes or more"; Article 8 requires "30 cumulative minutes or more." Because the LLM decides by reading the sentences which one 24 minutes falls under, the answer can change from one run to the next. Sometimes it may wrongly say "delivery could be refused."
+
+**3. It says "no problem" when it simply does not know.**
+The oyster contract requires humidity checks, but the reefer has no humidity sensor. With no data to check, the LLM tends to summarize it as "nothing unusual." In reality nothing was checked, yet it looks like a clean result.
+
+### With the ontology
+
+An ontology is close to a rulebook prepared from the contract in advance. For each clause it stores, as data, when it applies, what must be done, and which clauses it is connected to.
+
+1. Article 7 is stored as "connected to Article 6," so when Article 6 applies, Article 7 comes with it.
+2. Conditions are stored as numbers, so the system just compares values. 24 minutes is at least 15, so Article 6 applies; it is under 30, so Article 8 does not. The answer is the same no matter how many times you ask.
+3. When the data a decision needs is missing, it is marked separately as "needs confirmation."
+
+The LLM still writes the briefing, and RAG is still used: it finds the source text of each decided clause to quote, and it answers questions no rule covers ("what should we watch for when unloading tuna?"). What changes is **who makes the decision**. Aggregation computes the numbers, rules decide the obligations, and the LLM explains the result.
+
+### What MongoDB contributes to an AI ontology
+
+- **Ontology and data in one place.** Classes, relations, and rules are documents next to `readings` and `shipments`. Evaluating a rule is an aggregation over the same data, with no export to a separate reasoner.
+- **Semantic and structural retrieval in one pipeline.** `$vectorSearch` finds the clause a question means, `$lookup` attaches its rule, and `$graphLookup` follows its dependencies — a GraphRAG-style flow inside one aggregation.
+- **Grounded context for the LLM.** Tools return decisions with their basis (fact, condition, source chunk). The LLM explains a result instead of inferring one, and the defined vocabulary keeps its tool calls and generated queries on known names.
+- **Room to grow.** New clause kinds or measures are new fields in polymorphic documents, not schema migrations.
+
+### Scope
+
+The MVP keeps the ontology minimal: two class hierarchies (cargo, events), six relations, and one rule format, with clauses structured by hand. Clauses that do not fit the format stay as text and are cited, not decided. If decisions are low-stakes or a person reviews every answer anyway, RAG alone is enough; the ontology pays off when the same contract terms apply to many shipments every day.
 
 ---
 
 ## 4. Quick Start
-
-> The code is being rebuilt stage by stage to match this design. See [build plan](./design/build-plan.md) for what works now.
 
 **Requirements:** [uv](https://docs.astral.sh/uv/), MongoDB 5.0+ (Atlas or local), an OpenAI API key.
 
@@ -249,6 +250,7 @@ All companies, contracts, SOPs, and manuals are fictional demo material.
 ```text
 coldchain-copilot/
 ├── docs/            Contracts, SOP, maintenance manual (RAG sources)
+├── data/            Ontology, clauses, shipments, cargo defaults (JSON, loaded by seed.py)
 ├── design/          Detailed design (see below)
 ├── seed.py          Shipments, ontology, clauses, and readings with policy snapshots
 ├── ingest_docs.py   Chunk, embed, and load documents; create the Vector Search index
@@ -262,7 +264,5 @@ coldchain-copilot/
 | [`design/entities.md`](./design/entities.md) | Collections, document schemas, seeded data |
 | [`design/ontology.md`](./design/ontology.md) | Classes, relations, measures, rule format, evaluation |
 | [`design/interfaces.md`](./design/interfaces.md) | Tools by level, parameters, return shapes, errors, briefing format |
-| [`design/decisions/MVP-001.md`](./design/decisions/MVP-001.md) | Query-time detection on embedded policy snapshots |
-| [`design/decisions/MVP-002.md`](./design/decisions/MVP-002.md) | Clauses as rules: a minimal ontology |
+| [`design/decisions.md`](./design/decisions.md) | Key design decisions and when to revisit them |
 | [`design/scaling.md`](./design/scaling.md) | Shard-key and index candidates, what to measure before scaling |
-| [`design/build-plan.md`](./design/build-plan.md) | Stages, migration from the prototype, learning checkpoints |

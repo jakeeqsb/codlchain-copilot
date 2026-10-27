@@ -1,0 +1,6 @@
+[
+  { "cargoType": "cargo:live_fish",     "specVersion": "live-fish-v1",     "temperaturePolicy": { "minC": 0,   "maxC": 4 } },
+  { "cargoType": "cargo:oyster",        "specVersion": "oyster-v1",        "temperaturePolicy": { "minC": 1,   "maxC": 5 } },
+  { "cargoType": "cargo:frozen_tuna",   "specVersion": "frozen-tuna-v1",   "temperaturePolicy": { "minC": -60, "maxC": -50 } },
+  { "cargoType": "cargo:frozen_shrimp", "specVersion": "frozen-shrimp-v1", "temperaturePolicy": { "minC": -25, "maxC": -18 } }
+]
