@@ -196,11 +196,11 @@ The MVP keeps the ontology minimal: two class hierarchies (cargo, events), six r
 
 ## 4. Quick Start
 
-**Requirements:** [uv](https://docs.astral.sh/uv/), MongoDB 5.0+ (Atlas or local), an OpenAI API key.
+**Requirements:** [uv](https://docs.astral.sh/uv/), a MongoDB deployment with Vector Search, a Voyage AI API key (embeddings), an OpenAI API key (briefing LLM).
 
 ```bash
 uv sync
-cp .env.example .env          # set MONGODB_URI and OPENAI_API_KEY
+cp .env.example .env          # set MONGODB_URI, VOYAGE_API_KEY, OPENAI_API_KEY
 
 uv run seed.py                # shipments, ontology, clauses, 72 h of readings
 uv run ingest_docs.py         # docs/ → chunks + embeddings → knowledge
@@ -210,14 +210,15 @@ uv run chat.py                # interactive mode
 
 | Variable | Example |
 |---|---|
-| `MONGODB_URI` | `mongodb://localhost:27017/?directConnection=true` |
+| `MONGODB_URI` | `mongodb://localhost:27017` |
 | `DB_NAME` | `coldchain_copilot` |
-| `OPENAI_API_KEY` | `sk-...` |
+| `VOYAGE_API_KEY` | your Voyage AI key |
+| `VOYAGE_EMBED_MODEL` | `voyage-4` |
+| `OPENAI_API_KEY` | your OpenAI key |
 | `OPENAI_MODEL` | `gpt-5-mini` |
-| `OPENAI_EMBED_MODEL` | `text-embedding-3-small` |
+| `MAX_WINDOW_HOURS` | `72` |
 
-- **Local replica set in Docker:** use `directConnection=true` to connect straight to the primary.
-- **Vector Search** requires Atlas or the `mongodb-atlas-local` image. On a plain Community server, retrieval falls back to in-app cosine similarity; the `engine` field in search results shows which one ran.
+Provisioning MongoDB and the API keys is up to you; the project only reads these variables.
 
 ---
 
@@ -254,7 +255,7 @@ coldchain-copilot/
 ├── design/          Detailed design (see below)
 ├── seed.py          Shipments, ontology, clauses, and readings with policy snapshots
 ├── ingest_docs.py   Chunk, embed, and load documents; create the Vector Search index
-├── knowledge.py     Document retrieval ($vectorSearch, with fallback)
+├── knowledge.py     Document retrieval ($vectorSearch)
 ├── tools.py         LLM tools: lookup, detection, retrieval, rule evaluation
 └── chat.py          Tool-calling loop and system prompt
 ```
