@@ -217,6 +217,8 @@ uv run chat.py                # interactive mode
 | `OPENAI_API_KEY` | your OpenAI key |
 | `OPENAI_MODEL` | `gpt-5-mini` |
 | `MAX_WINDOW_HOURS` | `72` |
+| `DATA_DIR` | `data` |
+| `DOCS_DIR` | `docs` |
 
 Provisioning MongoDB and the API keys is up to you; the project only reads these variables.
 
