@@ -1,17 +1,34 @@
 [project]
 name = "coldchain-copilot"
 version = "0.1.0"
-description = "Add your description here"
+description = "Cold-chain copilot on MongoDB: Time Series sensor data, contract RAG, and an operational ontology for LLM briefings"
 readme = "README.md"
-authors = [
-    { name = "jakeeqsb", email = "jakeeqsbl@gmail.com" }
-]
-requires-python = ">=3.12"
-dependencies = []
 
+requires-python = ">=3.12"
+dependencies = [
+    "pymongo>=4.10",
+    "voyageai>=0.3",
+    "python-dotenv>=1.0",
+    "langgraph>=1.0",
+    "langchain-openai>=1.0",
+    "langgraph-checkpoint-mongodb>=0.5",
+]
+ 
 [project.scripts]
 coldchain-copilot = "coldchain_copilot:main"
-
+ 
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+ 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+ 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: needs a running MongoDB with seed data (skipped when MONGODB_URI is unreachable)",
+]
+ 
