@@ -1,16 +1,18 @@
 """Read the operational ontology and select the clauses that apply to a shipment.
 
-The ontology lives in the ``ontology`` collection (classes, detect rules,
-measures, relations, vocabulary) and rule-form clauses live in ``clauses``.
-This module answers three questions the evaluator needs before it looks at
-any sensor data:
+The ontology lives in the ``ontology`` collection: object types, cargo
+classes, link types, event types, action types, and parties. It holds names
+and connections only; functions are looked up in ``registry.py``. Rule-form
+clauses live in ``clauses``. This module answers the questions the engine
+needs before it looks at any sensor data:
 
 * Which classes does a shipment's cargo belong to? A live-fish shipment is
   also live seafood and seafood, so seafood-wide SOP clauses apply to it.
 * Which clauses apply? The shipment's own contract version, plus contract-free
   recommendations (SOP, manual) for any of its cargo classes.
-* Which clauses depend on a given clause? Followed through ``references``
-  with ``$graphLookup``.
+* Which event and action types do those clauses use?
+* Which clauses depend on a given clause? This is the ``follow_references``
+  traverser for ``rel:references``, implemented with ``$graphLookup``.
 """
 
 from __future__ import annotations
@@ -80,14 +82,13 @@ def applicable_clauses(shipment: Doc) -> list[Doc]:
     return list(db.collection(db.CLAUSES).find(query, {"_id": 0}).sort("clauseId", 1))
 
 
-def event_classes(event_types: set[str]) -> dict[str, Doc]:
-    """Returns the event class documents, including ``detect``, keyed by ``_id``.
+def ontology_docs(ids: set[str]) -> dict[str, Doc]:
+    """Returns ontology documents (event types, action types, ...) keyed by ``_id``.
 
-    The evaluator calls this once with every event type the selected clauses
-    trigger on, then runs each class's detect rule. Unknown types are simply
-    absent from the result.
+    The engine calls this once with every event and action type the selected
+    clauses use. Unknown ids are simply absent from the result.
     """
-    cursor = db.collection(db.ONTOLOGY).find({"_id": {"$in": sorted(event_types)}, "kind": "class"})
+    cursor = db.collection(db.ONTOLOGY).find({"_id": {"$in": sorted(ids)}})
     return {doc["_id"]: doc for doc in cursor}
 
 

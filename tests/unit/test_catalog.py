@@ -41,7 +41,7 @@ def test_real_catalog_has_no_problems(catalog: Catalog, chunk_ids: set[str]) -> 
 
 def test_real_catalog_sizes(catalog: Catalog, chunk_ids: set[str]) -> None:
     # Guards against a data file being emptied or truncated by mistake.
-    assert len(catalog.ontology) == 42
+    assert len(catalog.ontology) == 32
     assert len(catalog.clauses) == 15
     assert len(catalog.shipments) == 5
     assert len(catalog.cargo_specs) == 4
@@ -87,8 +87,7 @@ def _unknown_chained_clause(c: Catalog) -> None:
     clause(c, ART7)["trigger"]["clauseTriggered"] = "blueharbor-live-fish-v1-art99"
 
 
-def _event_without_detect(c: Catalog) -> None:
-    # event:incident is an abstract parent class with no detect rule.
+def _unknown_event_type(c: Catalog) -> None:
     clause(c, TUNA_ART7)["trigger"]["eventType"] = "event:incident"
 
 
@@ -104,14 +103,48 @@ def _cargo_without_prefix(c: Catalog) -> None:
     c.shipments[0]["cargoType"] = "live_fish"
 
 
+def ontology_doc(c: Catalog, doc_id: str) -> dict:
+    """Returns one ontology document from ``c``."""
+    return next(d for d in c.ontology if d["_id"] == doc_id)
+
+
+def _unregistered_detector(c: Catalog) -> None:
+    ontology_doc(c, "event:door_opening")["detector"] = "detect_door_ajar"
+
+
+def _unregistered_handler(c: Catalog) -> None:
+    ontology_doc(c, "action:notify")["handler"] = "send_fax"
+
+
+def _unregistered_traverser(c: Catalog) -> None:
+    ontology_doc(c, "rel:references")["traverse"] = "cypher_references"
+
+
+def _required_field_not_a_property(c: Catalog) -> None:
+    ontology_doc(c, "event:humidity_breach")["requiresFields"] = ["humidity"]
+
+
+def _chained_clause_not_in_references(c: Catalog) -> None:
+    clause(c, ART7)["references"] = []
+
+
 BROKEN_CASES: list[tuple[str, Callable[[Catalog], None], list[str]]] = [
+    ("unregistered detector", _unregistered_detector,
+     ["event:door_opening: detector detect_door_ajar is not registered"]),
+    ("unregistered handler", _unregistered_handler,
+     ["action:notify: handler send_fax is not registered"]),
+    ("unregistered traverser", _unregistered_traverser,
+     ["rel:references: traverse cypher_references is not registered"]),
+    ("required field not a property", _required_field_not_a_property,
+     ["event:humidity_breach: required field humidity is not a property of Reading"]),
+    ("chained clause not in references", _chained_clause_not_in_references,
+     [f"{ART7}: clauseTriggered {ART6} is missing from references"]),
     ("unknown measure", _unknown_measure,
-     [f"{ART6}: unknown measure consecutiveMinutez"]),
+     [f"{ART6}: event:temperature_excursion has no measure consecutiveMinutez"]),
     ("missing chunk", _missing_chunk,
      [f"{ART6}: chunkId blueharbor-live-fish-v1-article-99 not found in docs/"]),
     ("measure of another event", _measure_of_other_event,
-     [f"{TUNA_ART7}: measure stopMinutes belongs to event:compressor_stop, "
-      "not event:door_opening"]),
+     [f"{TUNA_ART7}: event:door_opening has no measure stopMinutes"]),
     ("unknown class", _unknown_class,
      [f"{ART6}: unknown class cargo:salmon"]),
     ("unknown action", _unknown_action,
@@ -119,20 +152,19 @@ BROKEN_CASES: list[tuple[str, Callable[[Catalog], None], list[str]]] = [
     ("unknown party", _unknown_party,
      [f"{ART6}: unknown party shipper.ceo"]),
     ("unknown reference", _unknown_reference,
-     [f"{ART7}: references unknown clause blueharbor-live-fish-v1-art99"]),
+     # art7 no longer references art6, so the chained-clause check fires too.
+     [f"{ART7}: references unknown clause blueharbor-live-fish-v1-art99",
+      f"{ART7}: clauseTriggered {ART6} is missing from references"]),
     ("unknown chained clause", _unknown_chained_clause,
      [f"{ART7}: depends on unknown clause blueharbor-live-fish-v1-art99"]),
-    ("event without detect", _event_without_detect,
-     # The measure check also fires: doorOpenMinutes no longer matches the event.
-     [f"{TUNA_ART7}: event event:incident has no detection rule",
-      f"{TUNA_ART7}: measure doorOpenMinutes belongs to event:door_opening, "
-      "not event:incident"]),
+    ("unknown event type", _unknown_event_type,
+     [f"{TUNA_ART7}: unknown event type event:incident"]),
     ("unknown op", _unknown_op,
      [f"{ART6}: unknown op between"]),
     ("contract without clauses", _contract_without_clauses,
      ["SHP-101: contract blueharbor-live-fish v2 has no clauses"]),
     ("cargoType without prefix", _cargo_without_prefix,
-     ["SHP-101: cargoType live_fish is not an ontology class",
+     ["SHP-101: cargoType live_fish is not a cargo class",
       "SHP-101: no cargo spec for live_fish"]),
 ]
 
@@ -159,7 +191,7 @@ def test_validate_raises_with_every_problem(catalog: Catalog, chunk_ids: set[str
         validate_catalog(catalog, chunk_ids)
 
     assert len(exc_info.value.problems) == 3
-    assert "unknown measure consecutiveMinutez" in str(exc_info.value)
+    assert "has no measure consecutiveMinutez" in str(exc_info.value)
 
 
 def test_validate_passes_on_real_catalog(catalog: Catalog, chunk_ids: set[str]) -> None:
