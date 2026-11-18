@@ -119,7 +119,6 @@ Returns one entry per reefer with `measures.powerChangePct`, and `eventType: "ev
 
 ```js
 {
-  engine: "atlas-vector-search",             // or "local-cosine-fallback"
   contractRef: { contractId: "blueharbor-live-fish", version: "v1" },
   results: [{ chunkId: "...", source: "BlueHarbor ... § Article 6", text: "...", score: 0.82 }]
 }
@@ -148,16 +147,22 @@ Contract chunks are filtered by `contractId` and `version` from the shipment. Wi
       action: { type: "notify", party: "shipper.qa" },
       deadline: "2026-10-15T01:12:00Z",
       basis: [{ measure: "consecutiveMinutes", op: "gte", required: 15, actual: 24 }],
-      chunkId: "blueharbor-live-fish-v1-article-6" },
+      chunkId: "blueharbor-live-fish-v1-article-6",
+      follows: ["blueharbor-live-fish-v1-art7"] },          // via follow_references ($graphLookup)
     { clauseId: "blueharbor-live-fish-v1-art7", status: "triggered",
       basis: [{ dependsOn: "blueharbor-live-fish-v1-art6" }], ... },
     { clauseId: "blueharbor-live-fish-v1-art8", status: "not_triggered",
       basis: [{ measure: "cumulativeMinutes", op: "gte", required: 30, actual: 24 }], ... }
+  ],
+  actions: [                                                  // one per triggered clause
+    { action: "notify", party: "shipper.qa", deadline: "2026-10-15T01:12:00Z",
+      clauseId: "blueharbor-live-fish-v1-art6", kind: "obligation",
+      evidence: "blueharbor-live-fish-v1-article-6", event: { ... } }, ...
   ]
 }
 ```
 
-Internally it detects every event type the selected clauses need, including door openings and compressor stops, by running each event class's `detect` definition from the `ontology` collection; no extra LLM tool is needed for them. `status` is one of `triggered`, `not_triggered`, `unresolved`. For `unresolved`, `basis` names what is missing (for example `{ missingField: "humidityPct" }`). Evaluation rules: [ontology.md § 5](./ontology.md#5-evaluation).
+The tool wraps `engine.evaluate_shipment`. Internally the engine runs the `detector` of every event type the selected clauses need, including door openings and compressor stops, so no extra LLM tool is needed for them. `status` is one of `triggered`, `not_triggered`, `unresolved`. For `unresolved`, `basis` names what is missing (`{ missingData: "event:humidity_breach" }` or `{ missingMeasure: "..." }`). Steps and rules: [ontology.md § 5](./ontology.md#5-execution-enginepy).
 
 ## Ad Hoc
 

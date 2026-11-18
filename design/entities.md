@@ -9,14 +9,14 @@ Six collections, in three groups.
 | Sensor | `readings` | Time Series | Minute-level measurements with a policy snapshot in `meta` |
 | Knowledge | `knowledge` | Regular + Vector Search index | Document chunks and embeddings (RAG) |
 | Knowledge | `clauses` | Regular | Contract and SOP clauses as structured rules |
-| Knowledge | `ontology` | Regular | Class hierarchy, relations, and measure vocabulary |
+| Knowledge | `ontology` | Regular | Object types, cargo classes, links, event and action types (names only, no logic) |
 
 ```text
 cargo_specs ──(setup only)──▶ shipments ──(policy copied)──▶ readings.meta
                                  │
                                  └── contractRef ──▶ clauses ──chunkId──▶ knowledge
                                                         │
-                                                   ontology (classes, measures)
+                                                   ontology (types, classes, links, function names)
 ```
 
 `shipments` is the hub. Detection reads only `readings`. Contract assessment starts from `shipments.contractRef`.
@@ -140,17 +140,26 @@ The structured form of a clause. Detailed format and evaluation rules: [ontology
 
 ## ontology
 
-Definitions, not data. One document per class, relation, or measure. Kept as a collection, not code constants, so the vocabulary lives next to the data it describes and tools and the LLM read the same definitions.
+Definitions, not data. 32 documents of six kinds. Kept as a collection, not code constants, so the vocabulary lives next to the data it describes and tools and the LLM read the same definitions. Behaviour is never stored here: event, link, and action documents name a function, and `registry.py` maps the name to code.
+
+| `kind` | Count | Example |
+|---|---|---|
+| `objectType` | 3 | `Shipment`, `Reading`, `Clause` (properties and collection) |
+| `class` | 7 | `cargo:live_fish` with precomputed `ancestors` |
+| `linkType` | 6 | `rel:references` with `traverse: "follow_references"` |
+| `eventType` | 5 | `event:temperature_excursion` with `detector` and `measures` |
+| `actionType` | 6 | `action:notify` with `handler` |
+| `party` | 5 | `party:shipper.qa` |
 
 ```js
 { _id: "cargo:live_fish", kind: "class", parent: "cargo:live_seafood",
   ancestors: ["cargo:live_seafood", "cargo:seafood"] }
 
-{ _id: "rel:governedBy", kind: "relation",
-  domain: "Shipment", range: "ContractVersion", storedAt: "shipments.contractRef" }
+{ _id: "event:temperature_excursion", kind: "eventType", on: "Reading",
+  detector: "detect_temperature_excursion", requiresFields: ["temp"],
+  measures: ["consecutiveMinutes", "cumulativeMinutes", "peakTemp", "lowestTemp", "direction", "cause"] }
 
-{ _id: "measure:consecutiveMinutes", kind: "measure",
-  appliesTo: "event:temperature_excursion", unit: "min" }
+{ _id: "rel:references", kind: "linkType", from: "Clause", to: "Clause", traverse: "follow_references" }
 ```
 
 Full lists: [ontology.md](./ontology.md).

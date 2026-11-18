@@ -252,14 +252,21 @@ All companies, contracts, SOPs, and manuals are fictional demo material.
 
 ```text
 coldchain-copilot/
-├── docs/            Contracts, SOP, maintenance manual (RAG sources)
-├── data/            Ontology, clauses, shipments, cargo defaults (JSON, loaded by seed.py)
-├── design/          Detailed design (see below)
-├── seed.py          Shipments, ontology, clauses, and readings with policy snapshots
-├── ingest_docs.py   Chunk, embed, and load documents; create the Vector Search index
-├── knowledge.py     Document retrieval ($vectorSearch)
-├── tools.py         LLM tools: lookup, detection, retrieval, rule evaluation
-└── chat.py          Tool-calling loop and system prompt
+├── data/                  Ontology, clauses, shipments, cargo defaults (JSON)
+├── docs/                  Contracts, SOP, maintenance manual (RAG sources)
+├── design/                Detailed design (see below)
+├── scripts/
+│   └── seed.py            Validate the catalog, load it, simulate 72 h of readings
+├── src/coldchain_copilot/
+│   ├── config.py · db.py · errors.py
+│   ├── catalog.py         Check every name used by clauses and the ontology
+│   ├── ontology.py        Cargo classes, applicable clauses, follow_references ($graphLookup)
+│   ├── detection.py       Detector functions (MongoDB aggregation on readings)
+│   ├── rules.py           Compare clause conditions with detected measures
+│   ├── registry.py        Ontology function names → functions
+│   ├── engine.py          Evaluate one shipment: clauses → detect → compare → follow → act
+│   └── tools/             LLM tools (in progress)
+└── tests/                 unit/ (no database) · integration/ (local MongoDB)
 ```
 
 | Design document | Contents |
