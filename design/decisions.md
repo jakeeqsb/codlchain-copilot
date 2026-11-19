@@ -32,7 +32,7 @@ Each clause is stored as a rule (trigger conditions, action, deadline, dependenc
 
 ## 4. Keep the graph in MongoDB, for now
 
-Relations are existing fields; `$graphLookup` is used only for clause dependencies (1–2 hops).
+Relations are existing fields; `$graphLookup` is used only for clause dependencies (1–2 hops), inside the `follow_references` traverser.
 
 - **Why:** The graph is small, shallow, and always starts from a shipment or incident.
 
@@ -47,8 +47,21 @@ Relations are existing fields; `$graphLookup` is used only for clause dependenci
   - MongoDB stays the system of record: sensor history, shipments, documents, embeddings, per-shipment rule evaluation.
   - A graph database holds a projection of relationships (equipment, parts, suppliers, depots) for multi-hop paths and analytics.
   - Shared IDs connect them: the graph answers *which entities*, MongoDB answers *what we know about them*.
+- **Swap point:** Traversal is the only behaviour that moves. `rel:references` names its traverser (`follow_references`), and `registry.py` maps the name to a function. Registering a graph-database implementation under that name, or behind a future `graph_engine` chosen by configuration, changes nothing else: definitions, rules, detection, and data stay in MongoDB. The graph database would hold a copy of link values (IDs and link types), kept in sync from MongoDB, and can be rebuilt from it.
 
-## 5. Keep all four kinds of data in one MongoDB cluster
+## 5. Name functions in the ontology; keep logic in code
+
+The ontology holds names and connections only. Event types name a `detector`, multi-hop link types name a `traverse` function, and action types name a `handler`; `registry.py` maps each name to a Python function. Rule conditions stay data.
+
+- **Why:**
+  - **Readable.** A clause → its event type → the detector name → the function, where the MongoDB pipeline is in plain sight. No compiler or binding layer to follow.
+  - **Replaceable.** Any behaviour is swapped by registering another function under the same name (the graph swap in § 4 is one case).
+  - **One vocabulary for the engine and the agent.** The same named functions can be exposed to the LLM as tools.
+- **Rule conditions are data, not functions.** Thresholds and deadlines differ per contract. One comparison function (`rules.py`) evaluates every clause, so a new contract adds documents, not code, and clauses could later be drafted by an LLM and approved by a person.
+- **Tried and dropped:** storing MQL in the ontology (couples definitions to MongoDB syntax), and a neutral condition language compiled to MQL with a separate bindings collection (decoupled, but too many moving parts to follow for an MVP).
+- **Cost:** A new event type needs one small detector function and a registry entry, not only a document. `catalog.py` checks at seed time that every function name the ontology uses is registered.
+
+## 6. Keep all four kinds of data in one MongoDB cluster
 
 Sensor facts, shipment context, contract text, and rules live in one database.
 
@@ -56,4 +69,3 @@ Sensor facts, shipment context, contract text, and rules live in one database.
 - **Time Series.** Buckets and column compression (delta, delta-of-delta, zstd) reduce storage, index size, and cache use. `meta` is a structured document, queried by subfield. Excursions are detected with `$setWindowFields` and `$shift` on the time series itself. Retention is `expireAfterSeconds`; sharding on `meta` fields is available later.
 - **Vector Search.** `$vectorSearch` filters by the `contractId` and `version` read from the shipment, so no metadata is copied into a separate store.
 - **Accepted limits.** Time Series collections are append-oriented and do not support Change Streams, Database Triggers, or schema validation. Readings are never edited and are validated at ingestion, so these limits do not block the MVP.
-

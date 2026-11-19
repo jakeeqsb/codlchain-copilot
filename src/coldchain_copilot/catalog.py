@@ -1,10 +1,12 @@
 """Load and validate the rule catalog before it reaches MongoDB.
 
-The catalog is the hand-written data under ``data/``: ontology documents,
-rule-form clauses, shipments, and cargo specs. Clauses only work if every name
-they use is defined in the ontology and every clause points to real source
-text in ``docs/``. This module checks those links so a typo fails at seed time
-instead of silently producing ``not_triggered`` at evaluation time.
+The catalog is the hand-written data under ``data/``: the ontology, rule-form
+clauses, shipments, and cargo specs. Clauses only work if every name they use
+is defined in the ontology and every clause points to real source text in
+``docs/``. The ontology only works if every function name it uses (detector,
+traverser, action handler) is registered in ``registry.py``. This module
+checks those links so a typo fails at seed time instead of silently
+producing ``not_triggered`` later.
 
 Paths are passed in by the caller; this module does not guess where the
 repository lives. Scripts take them from ``DATA_DIR`` and ``DOCS_DIR`` in
@@ -24,6 +26,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from . import registry
 
 COMPARISON_OPS = frozenset({"eq", "gt", "gte", "lt", "lte"})
 """Operators a clause condition may use (see design/ontology.md §4)."""
@@ -48,10 +52,11 @@ class CatalogError(ValueError):
 
 @dataclass(frozen=True)
 class Catalog:
-    """The four hand-written data files, as loaded from JSON.
+    """The hand-written data files, as loaded from JSON.
 
     Attributes:
-        ontology: Classes, measures, relations, actions, and parties.
+        ontology: Object types, classes, link types, event types, action
+            types, and parties.
         clauses: Rule-form clauses from contracts, the SOP, and the manual.
         shipments: Shipments before policy resolution (no dates, no policy).
         cargo_specs: Default temperature policy per cargo class.
@@ -159,14 +164,20 @@ def find_catalog_problems(catalog: Catalog, chunk_ids: set[str]) -> list[str]:
         * ``chunkId`` exists in the source documents.
         * ``appliesTo`` classes, ``action.type``, and ``action.party`` are
           defined in the ontology.
-        * ``references`` and ``clauseTriggered`` name existing clauses.
-        * The trigger's event class has a ``detect`` rule.
-        * Each condition's measure exists, belongs to the trigger's event
-          class, and uses an allowed operator.
+        * ``references`` and ``clauseTriggered`` name existing clauses, and a
+          ``clauseTriggered`` clause is also listed in ``references``.
+        * The trigger's event type exists, and each condition uses one of its
+          ``measures`` with an allowed operator.
+
+    Ontology checks:
+        * Every ``detector``, ``traverse``, and ``handler`` name is registered
+          in ``registry.py``.
+        * An event type's ``on`` is an object type, and its
+          ``requiresFields`` are properties of that type.
 
     Shipment checks:
         * Its contract version has at least one clause.
-        * ``cargoType`` is an ontology class and has a cargo spec.
+        * ``cargoType`` is a cargo class and has a cargo spec.
 
     Args:
         catalog: The loaded catalog.
@@ -178,17 +189,35 @@ def find_catalog_problems(catalog: Catalog, chunk_ids: set[str]) -> list[str]:
     """
     by_id = {d["_id"]: d for d in catalog.ontology}
 
-    def names(kind: str) -> dict[str, Doc]:
-        # "measure:stopMinutes" -> "stopMinutes"; clauses use the short name.
-        return {i.split(":", 1)[1]: d for i, d in by_id.items() if d["kind"] == kind}
+    def of_kind(kind: str) -> dict[str, Doc]:
+        return {i: d for i, d in by_id.items() if d["kind"] == kind}
 
-    classes = {i for i, d in by_id.items() if d["kind"] == "class"}
-    measures = names("measure")
-    actions = names("action")
-    parties = names("party")
+    classes = set(of_kind("class"))
+    event_types = of_kind("eventType")
+    actions = {i.split(":", 1)[1] for i in of_kind("actionType")}  # clauses use "notify"
+    parties = {i.split(":", 1)[1] for i in of_kind("party")}
     clause_ids = {c["clauseId"] for c in catalog.clauses}
     problems: list[str] = []
 
+    # ---- ontology: every function name is registered
+    for eid, ev in event_types.items():
+        if ev["detector"] not in registry.DETECTORS:
+            problems.append(f"{eid}: detector {ev['detector']} is not registered")
+        obj = by_id.get(ev["on"], {})
+        if obj.get("kind") != "objectType":
+            problems.append(f"{eid}: on {ev['on']} is not an object type")
+        else:
+            for field in ev["requiresFields"]:
+                if field not in obj["properties"]:
+                    problems.append(f"{eid}: required field {field} is not a property of {ev['on']}")
+    for aid, action in of_kind("actionType").items():
+        if action["handler"] not in registry.ACTIONS:
+            problems.append(f"{aid}: handler {action['handler']} is not registered")
+    for lid, link in of_kind("linkType").items():
+        if "traverse" in link and link["traverse"] not in registry.TRAVERSERS:
+            problems.append(f"{lid}: traverse {link['traverse']} is not registered")
+
+    # ---- clauses: every name is in the ontology
     for clause in catalog.clauses:
         cid, trigger, action = clause["clauseId"], clause["trigger"], clause["action"]
         if clause["chunkId"] not in chunk_ids:
@@ -206,25 +235,24 @@ def find_catalog_problems(catalog: Catalog, chunk_ids: set[str]) -> list[str]:
 
         if "clauseTriggered" in trigger:
             # Chained clause: fires when another clause fires; no conditions of its own.
-            if trigger["clauseTriggered"] not in clause_ids:
-                problems.append(f"{cid}: depends on unknown clause {trigger['clauseTriggered']}")
+            parent = trigger["clauseTriggered"]
+            if parent not in clause_ids:
+                problems.append(f"{cid}: depends on unknown clause {parent}")
+            elif parent not in clause.get("references", []):
+                problems.append(f"{cid}: clauseTriggered {parent} is missing from references")
             continue
 
-        event_type = trigger["eventType"]
-        if "detect" not in by_id.get(event_type, {}):
-            problems.append(f"{cid}: event {event_type} has no detection rule")
+        event = event_types.get(trigger["eventType"])
+        if event is None:
+            problems.append(f"{cid}: unknown event type {trigger['eventType']}")
+            continue
         for cond in trigger["allOf"]:
-            measure = measures.get(cond["measure"])
-            if measure is None:
-                problems.append(f"{cid}: unknown measure {cond['measure']}")
-            elif measure["eventType"] != event_type:
-                problems.append(
-                    f"{cid}: measure {cond['measure']} belongs to "
-                    f"{measure['eventType']}, not {event_type}"
-                )
+            if cond["measure"] not in event["measures"]:
+                problems.append(f"{cid}: {trigger['eventType']} has no measure {cond['measure']}")
             if cond["op"] not in COMPARISON_OPS:
                 problems.append(f"{cid}: unknown op {cond['op']}")
 
+    # ---- shipments
     contracts = {(c["contractId"], c["version"]) for c in catalog.clauses if c["contractId"]}
     specs = {s["cargoType"] for s in catalog.cargo_specs}
     for shipment in catalog.shipments:
@@ -232,7 +260,7 @@ def find_catalog_problems(catalog: Catalog, chunk_ids: set[str]) -> list[str]:
         if (ref["contractId"], ref["version"]) not in contracts:
             problems.append(f"{sid}: contract {ref['contractId']} {ref['version']} has no clauses")
         if shipment["cargoType"] not in classes:
-            problems.append(f"{sid}: cargoType {shipment['cargoType']} is not an ontology class")
+            problems.append(f"{sid}: cargoType {shipment['cargoType']} is not a cargo class")
         if shipment["cargoType"] not in specs:
             problems.append(f"{sid}: no cargo spec for {shipment['cargoType']}")
 

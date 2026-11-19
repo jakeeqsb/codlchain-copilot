@@ -29,10 +29,9 @@ KNOWLEDGE = "knowledge"
 CLAUSES = "clauses"
 """Rule-form clauses evaluated by ``evaluate_obligations``."""
 ONTOLOGY = "ontology"
-"""Classes, detect rules, measures, relations, and vocabulary."""
+"""Object types, classes, link types, event types, action types, parties."""
 CARGO_SPECS = "cargo_specs"
 """Default temperature policy per cargo class."""
-
 ALL_COLLECTIONS = (SHIPMENTS, READINGS, KNOWLEDGE, CLAUSES, ONTOLOGY, CARGO_SPECS)
 
 
