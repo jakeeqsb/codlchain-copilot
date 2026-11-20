@@ -11,7 +11,7 @@ DB_NAME). ``knowledge`` is not written here; scripts/ingest_docs.py does that.
 Collections written (each is dropped and recreated):
     cargo_specs  default temperature policy per cargo class
     shipments    five shipments, policy resolved, departed 72 h before the run
-    ontology     classes, detect rules, measures, relations, vocabulary
+    ontology     object types, classes, link types, event types, action types, parties
     clauses      contract, SOP, and manual clauses as rules
     readings     Time Series, one reading per reefer per minute, policy in meta
 
@@ -261,11 +261,7 @@ def scenario_facts(shipment: Doc, readings: list[Doc], now: datetime) -> dict[st
 def write(
     database: Database, catalog: Catalog, shipments: list[Doc], readings: dict[str, list[Doc]]
 ) -> None:
-    """Drops and recreates the seeded collections and their indexes.
-
-    ``ontology`` stores MQL in ``detect.match`` (for example ``$expr``), so the
-    server must accept ``$``-prefixed field names: MongoDB 5.0 or later.
-    """
+    """Drops and recreates the seeded collections and their indexes."""
     for name in (db.CARGO_SPECS, db.SHIPMENTS, db.ONTOLOGY, db.CLAUSES, db.READINGS):
         database.drop_collection(name)
 
